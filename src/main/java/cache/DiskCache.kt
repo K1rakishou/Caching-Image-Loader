@@ -3,6 +3,7 @@ package cache
 import java.io.File
 import java.lang.NumberFormatException
 import java.lang.RuntimeException
+import java.nio.file.Files
 
 class DiskCache(
   private val maxDiskCacheSize: Long,
@@ -25,16 +26,24 @@ class DiskCache(
   }
 
   override fun store(key: String, value: File) {
-    if (calculateTotalCacheSize() > maxDiskCacheSize) {
-      val lastAddedEntries = getLastAddedCacheEntries(value.length())
+    val fileLength = value.length()
+    val totalCacheSize = calculateTotalCacheSize() + fileLength
+
+    if (totalCacheSize > maxDiskCacheSize) {
+      println("Disk cache size exceeded ($totalCacheSize > $maxDiskCacheSize)")
+      val clearAtLeast = Math.max((maxDiskCacheSize * 0.3).toLong(), fileLength)
+
+      println("Removing images to clear at least ${clearAtLeast} bytes in cache")
+      val lastAddedEntries = getLastAddedCacheEntries(clearAtLeast)
 
       for (entry in lastAddedEntries) {
+        println("Removing CacheEntry: $entry")
         remove(entry.url)
       }
     }
 
-    cache[key] = CacheEntry(key, value.name, value.length(), System.currentTimeMillis())
-    saveToCacheFile()
+    cache[key] = CacheEntry(key, value.name, fileLength, System.currentTimeMillis())
+    updateCacheInfoFile()
   }
 
   override fun get(key: String): File? {
@@ -63,22 +72,34 @@ class DiskCache(
       return
     }
 
-    val fullPath = File(cacheDir, cacheEntry.fileName)
-    fullPath.delete()
+    val path = File(cacheDir, cacheEntry.fileName).toPath()
+    Files.deleteIfExists(path)
 
     cache.remove(key)
-    saveToCacheFile()
+    updateCacheInfoFile()
   }
 
-  private fun getLastAddedCacheEntries(sizeAtLeast: Long): List<CacheEntry> {
+  override fun clear() {
+    cache.clear()
+
+    for (file in cacheDir.listFiles()) {
+      if (file.exists() && file.isFile) {
+        Files.deleteIfExists(file.toPath())
+      }
+    }
+
+    cacheDir.delete()
+  }
+
+  private fun getLastAddedCacheEntries(clearAtLeast: Long): List<CacheEntry> {
     val sortedCacheEntries = cache.values
-      .sortedByDescending { it.addedOn }
+      .sortedBy { it.addedOn }
 
     var accumulatedSize = 0L
     val cacheEntryList = mutableListOf<CacheEntry>()
 
     for (entry in sortedCacheEntries) {
-      if (accumulatedSize > sizeAtLeast) {
+      if (accumulatedSize >= clearAtLeast) {
         break
       }
 
@@ -94,7 +115,9 @@ class DiskCache(
       return 0L
     }
 
-    return cache.values.map { it.fileSize }.reduce { acc, l -> acc + l }
+    return cache.values
+      .map { it.fileSize }
+      .reduce { acc, len -> acc + len }
   }
 
   private fun readCacheFile() {
@@ -104,44 +127,49 @@ class DiskCache(
     cache.clear()
 
     for (line in lines) {
-      var isCorrupted = false
-      val (url, fileName, fileSizeStr, addedOnStr) = line.split(separator)
+      val split = line.split(separator)
+
+      if (split.size != 4) {
+        hasCorruptedEntries = true
+        continue
+      }
+
+      val (url, fileName, fileSizeStr, addedOnStr) = split
 
       if (url.isEmpty()) {
-        isCorrupted = true
+        hasCorruptedEntries = true
+        continue
       }
 
       if (fileName.isEmpty()) {
-        isCorrupted = true
+        hasCorruptedEntries = true
+        continue
       }
 
       val fileSize = try {
         fileSizeStr.toLong()
       } catch (error: NumberFormatException) {
-        isCorrupted = true
-        0L
+        hasCorruptedEntries = true
+        continue
       }
 
       val addedOn = try {
         addedOnStr.toLong()
       } catch (error: NumberFormatException) {
-        isCorrupted = true
-        0L
-      }
-
-      if (isCorrupted) {
         hasCorruptedEntries = true
         continue
       }
 
-      val key = cacheDir.absolutePath + "\\" + fileName
-
-      if (cache.containsKey(key)) {
+      if (cache.containsKey(url)) {
         hasCorruptedEntries = true
         continue
       }
 
-      cache[key] = CacheEntry(url, fileName, fileSize, addedOn)
+      cache[url] = CacheEntry(url, fileName, fileSize, addedOn)
+    }
+
+    if (getAllCachedFilesInCacheDir().size != lines.size) {
+      hasCorruptedEntries = true
     }
 
     if (hasCorruptedEntries) {
@@ -149,7 +177,38 @@ class DiskCache(
     }
   }
 
-  private fun saveToCacheFile() {
+  private fun removeCorruptedEntries() {
+    val filesInCacheDirectory = getAllCachedFilesInCacheDir()
+    val toDeleteCacheEntries = mutableSetOf<CacheEntry>()
+
+    for (file in filesInCacheDirectory) {
+      val fileName = file.name
+
+      for (cacheEntry in cache.values) {
+        if (fileName == cacheEntry.fileName) {
+          break
+        }
+
+        toDeleteCacheEntries += cacheEntry
+      }
+    }
+
+    for (toDeleteEntry in toDeleteCacheEntries) {
+      cache.remove(toDeleteEntry.url)
+
+      val path = File(cacheDir, toDeleteEntry.fileName).toPath()
+      Files.deleteIfExists(path)
+    }
+
+    updateCacheInfoFile()
+  }
+
+  private fun getAllCachedFilesInCacheDir(): Array<File> {
+    return cacheDir
+      .listFiles { _, fileName -> fileName != cacheInfoFile.name }
+  }
+
+  private fun updateCacheInfoFile() {
     val outString = buildString {
       for ((_, value) in cache) {
         appendln("${value.url}${separator}${value.fileName}${separator}${value.fileSize}${separator}${value.addedOn}")
@@ -157,10 +216,6 @@ class DiskCache(
     }
 
     cacheInfoFile.writeText(outString)
-  }
-
-  private fun removeCorruptedEntries() {
-    TODO("not implemented") //To change body of created functions use File | Settings | File Templates.
   }
 
   data class CacheEntry(

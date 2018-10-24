@@ -2,11 +2,12 @@ import cache.DiskCache
 import io.ktor.client.HttpClient
 import io.ktor.client.call.call
 import io.ktor.client.engine.cio.CIO
+import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import javafx.scene.image.Image
 import javafx.scene.image.ImageView
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Job
+import kotlinx.coroutines.*
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.SendChannel
 import kotlinx.coroutines.channels.actor
 import kotlinx.coroutines.io.jvm.javaio.copyTo
@@ -14,25 +15,25 @@ import java.io.File
 import java.lang.ref.WeakReference
 import kotlin.coroutines.CoroutineContext
 
-class CachingImageLoader : CoroutineScope {
-  private val defaultDiskCacheSize = 1024 * 1024 * 96L
-  private val defaultMemoryCacheSize = 1024 * 1024 * 32L
+class CachingImageLoader(
+  maxDiskCacheSize: Long = defaultDiskCacheSize,
+  cacheDir: File = File(System.getProperty("user.dir")),
+  val dispatcher: CoroutineDispatcher = newFixedThreadPoolContext(2, "caching-image-loader")
+) : CoroutineScope {
+  private val activeRequests = mutableSetOf<String>()
 
-  private lateinit var job: Job
-  private lateinit var requestsActor: SendChannel<Request>
+  private var job: Job
+  private var requestsActor: SendChannel<Request>
 
-  private lateinit var diskCache: DiskCache
-  private lateinit var imageCacheDir: File
-  private lateinit var client: HttpClient
+  private var diskCache: DiskCache
+  private var imageCacheDir: File
+  private var client: HttpClient
 
   override val coroutineContext: CoroutineContext
     get() = job
 
-  fun init(
-    maxDiskCacheSize: Long = defaultDiskCacheSize,
-    maxMemoryCacheSize: Long = defaultMemoryCacheSize
-  ) {
-    imageCacheDir = File(System.getProperty("user.dir") + "\\image-cache")
+  init {
+    imageCacheDir = File(cacheDir, "\\image-cache")
     if (!imageCacheDir.exists()) {
       if (!imageCacheDir.mkdirs()) {
         throw IllegalStateException("Could not create image cache directory: ${imageCacheDir.absolutePath}")
@@ -53,64 +54,182 @@ class CachingImageLoader : CoroutineScope {
 
     job = Job()
 
-    requestsActor = actor(job, capacity = 4) {
+    requestsActor = actor(job, capacity = 16) {
       for (request in channel) {
-        processRequest(request.url, request.imageView)
+        try {
+          when (request) {
+            is Request.LoadAndShow -> processLoadAndShowRequest(request.url, request.imageView)
+            is Request.Load -> {
+              val result = processLoadRequest(request.url)
+              request.responseChannel.send(result)
+            }
+          }
+        } finally {
+          activeRequests.remove(request.url)
+        }
       }
     }
   }
 
-  fun destroy() {
+  fun shutdown() {
     job.cancel()
+    client.close()
   }
 
-  suspend fun loadImageInto(url: String, imageView: ImageView) {
-    val imgView = WeakReference(imageView)
+  //for tests
+  fun shutdownAndClearEverything() {
+    shutdown()
+    diskCache.clear()
+  }
 
-    if (diskCache.contains(url)) {
-      diskCache.get(url)?.let { file ->
-        println("FROM CACHE")
-        setImage(imgView, file)
-      } ?: kotlin.run { println("NOTHING!") }
-
+  fun loadImageInto(url: String, imageView: ImageView) {
+    if (checkRequestAlreadyInProgress(url)) {
       return
     }
 
-    println("FROM NETWORK")
-    requestsActor.send(Request(url, imgView))
+    launch(dispatcher) {
+      requestsActor.send(Request.LoadAndShow(url, WeakReference(imageView)))
+    }
   }
 
-  private suspend fun processRequest(imageUrl: String, imageView: WeakReference<ImageView>) {
-    client.call(imageUrl).response.use { response ->
-      if (response.status != HttpStatusCode.OK) {
-        imageView.get()?.let { iv ->
-          //TODO: set error image
+  fun loadImage(url: String, _callback: (Image) -> Unit) {
+    if (checkRequestAlreadyInProgress(url)) {
+      return
+    }
+
+    val callback = WeakReference(_callback)
+
+    launch(dispatcher) {
+      val receiveChannel = Channel<File?>(capacity = 1)
+      requestsActor.send(Request.Load(url, receiveChannel))
+
+      val imageFile = receiveChannel.receive()
+      if (imageFile == null) {
+        return@launch
+      }
+
+      val image = imageFile.inputStream().use {
+        Image(it)
+      }
+
+      callback.get()?.invoke(image)
+    }
+  }
+
+  fun getImage(url: String): Deferred<Image?> {
+    return async(dispatcher) {
+      if (checkRequestAlreadyInProgress(url)) {
+        return@async null
+      }
+
+      val receiveChannel = Channel<File?>(capacity = 1)
+      requestsActor.send(Request.Load(url, receiveChannel))
+
+      val imageFile = receiveChannel.receive()
+      if (imageFile == null) {
+        return@async null
+      }
+
+      return@async imageFile.inputStream().use {
+        Image(it)
+      }
+    }
+  }
+
+  private fun checkRequestAlreadyInProgress(url: String): Boolean {
+    if (!activeRequests.add(url)) {
+      println("Already in progress")
+      return true
+    }
+
+    return false
+  }
+
+  private suspend fun processLoadAndShowRequest(imageUrl: String, imageView: WeakReference<ImageView>) {
+    try {
+      val imageFile = downloadImage(imageUrl)
+      if (imageFile != null) {
+        setImage(imageView, imageFile)
+      } else {
+        setImageError(imageView)
+      }
+    } catch (error: Throwable) {
+      error.printStackTrace()
+      setImageError(imageView)
+    }
+  }
+
+  private suspend fun processLoadRequest(imageUrl: String): File? {
+    return downloadImage(imageUrl)
+  }
+
+  private suspend fun downloadImage(imageUrl: String): File? {
+    try {
+      if (diskCache.contains(imageUrl)) {
+        println("image ($imageUrl) exists in the cache")
+        return diskCache.get(imageUrl)
+      }
+
+      println("image ($imageUrl) does not exist in the cache")
+
+      return client.call(imageUrl).response.use { response ->
+        if (response.status != HttpStatusCode.OK) {
+          println("Response status is not OK! (${response.status})")
+          return@use null
         }
 
-        return@use
+        val contentTypeString = response.headers.get(HttpHeaders.ContentType)
+        if (contentTypeString == null) {
+          println("Content-type is null!")
+          return@use null
+        }
+
+        if (contentTypeString != "image/png" && contentTypeString != "image/jpeg" && contentTypeString != "image/jpg") {
+          println("Content-type is not supported")
+          return@use null
+        }
+
+        val fileName = "${System.nanoTime()}_${imageUrl.hashCode().toUInt()}.cached"
+        val imageFile = File(imageCacheDir, fileName)
+
+        imageFile.outputStream().use {
+          response.content.copyTo(it)
+        }
+
+        diskCache.store(imageUrl, imageFile)
+        return@use imageFile
       }
-
-      //TODO: change name  generation to something else
-      val file = File(imageCacheDir, System.currentTimeMillis().toString())
-
-      //TODO: ensure the stream is closed
-      file.outputStream().use {
-        response.content.copyTo(it)
-      }
-
-      diskCache.store(imageUrl, file)
-      setImage(imageView, file)
+    } catch (error: Throwable) {
+      error.printStackTrace()
+      return null
     }
+  }
+
+  private fun setImageError(imageView: WeakReference<ImageView>) {
+    //TODO
   }
 
   private fun setImage(imageView: WeakReference<ImageView>, file: File) {
     imageView.get()?.let { iv ->
-      iv.image = Image(file.inputStream())
+      file.inputStream().use {
+        iv.image = Image(it)
+      }
     }
   }
 
-  class Request(
-    val url: String,
-    val imageView: WeakReference<ImageView>
-  )
+  sealed class Request(val url: String) {
+    class LoadAndShow(
+      url: String,
+      val imageView: WeakReference<ImageView>
+    ) : Request(url)
+
+    class Load(
+      url: String,
+      val responseChannel: Channel<File?>
+    ) : Request(url)
+  }
+
+  companion object {
+    const val defaultDiskCacheSize = 1024 * 1024 * 96L
+  }
 }
