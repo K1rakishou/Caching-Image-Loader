@@ -12,6 +12,9 @@ class TestView : View() {
   private val imageLoader = CachingImageLoader()
   private val counter = AtomicInteger(0)
   private val images = listOf(
+    "https://i.imgur.com/cc2M7sK.png",
+    "https://i.imgur.com/aCedFRM.jpg",
+    "https://i.imgur.com/858QmKq.jpg",
     "https://i.imgur.com/aHeHrkH.jpg",
     "https://i.imgur.com/BrainlI.jpg",
     "https://i.imgur.com/s0FJbU6.png",
@@ -41,8 +44,8 @@ class TestView : View() {
       }
     }
     imageView = imageview {
-      maxWidth = 600.0
-      maxHeight = 1100.0
+      fitWidth = 600.0
+      fitHeight = 1100.0
     }
 
   }

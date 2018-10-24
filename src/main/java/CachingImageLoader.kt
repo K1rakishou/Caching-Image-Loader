@@ -4,6 +4,7 @@ import io.ktor.client.call.call
 import io.ktor.client.engine.cio.CIO
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
+import javafx.embed.swing.SwingFXUtils
 import javafx.scene.image.Image
 import javafx.scene.image.ImageView
 import kotlinx.coroutines.*
@@ -11,8 +12,10 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.SendChannel
 import kotlinx.coroutines.channels.actor
 import kotlinx.coroutines.io.jvm.javaio.copyTo
+import transformers.FitCenterTransformer
 import java.io.File
 import java.lang.ref.WeakReference
+import javax.imageio.ImageIO
 import kotlin.coroutines.CoroutineContext
 
 class CachingImageLoader(
@@ -211,8 +214,10 @@ class CachingImageLoader(
 
   private fun setImage(imageView: WeakReference<ImageView>, file: File) {
     imageView.get()?.let { iv ->
-      file.inputStream().use {
-        iv.image = Image(it)
+      file.inputStream().use { fileStream ->
+        val bufferedImage = ImageIO.read(fileStream)
+        val outImage = FitCenterTransformer(iv.fitWidth, iv.fitHeight).transform(bufferedImage)
+        iv.image = SwingFXUtils.toFXImage(outImage, null)
       }
     }
   }
