@@ -1,26 +1,27 @@
 import cache.CacheValue
 import cache.DiskCache
-import io.ktor.client.HttpClient
-import io.ktor.client.call.call
-import io.ktor.client.engine.cio.CIO
-import io.ktor.http.HttpHeaders
+import core.ImageType
+import core.LoaderRequest
+import core.SaveStrategy
+import http.DefaultHttpClient
+import http.HttpClientFacade
 import io.ktor.http.HttpStatusCode
 import javafx.embed.swing.SwingFXUtils
 import javafx.scene.image.Image
 import javafx.scene.image.ImageView
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.io.jvm.javaio.copyTo
+import kotlinx.coroutines.future.await
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import transformers.ImageTransformer
 import transformers.FitCenterTransformer
+import transformers.ImageTransformer
 import transformers.ResizeTransformer
 import transformers.TransformationType
 import java.awt.image.BufferedImage
 import java.io.File
-import java.lang.RuntimeException
 import java.lang.ref.WeakReference
+import java.util.concurrent.CompletableFuture
 import javax.imageio.ImageIO
 import kotlin.coroutines.CoroutineContext
 
@@ -28,8 +29,9 @@ import kotlin.coroutines.CoroutineContext
 class CachingImageLoader(
   maxDiskCacheSize: Long = defaultDiskCacheSize,
   cacheDir: File = File(System.getProperty("user.dir")),
-  private val dispatcher: CoroutineDispatcher = newFixedThreadPoolContext(2, "caching-image-loader"),
-  private val showDebugLog: Boolean = true
+  private val showDebugLog: Boolean = true,
+  private val client: HttpClientFacade = DefaultHttpClient(showDebugLog),
+  private val dispatcher: CoroutineDispatcher = newFixedThreadPoolContext(2, "caching-image-loader")
 ) : CoroutineScope {
   private val activeRequests = mutableSetOf<String>()
   private val mutex = Mutex()
@@ -37,7 +39,6 @@ class CachingImageLoader(
 
   private var diskCache: DiskCache
   private var imageCacheDir: File
-  private var client: HttpClient
 
   override val coroutineContext: CoroutineContext
     get() = job
@@ -53,16 +54,6 @@ class CachingImageLoader(
     diskCache = runBlocking {
       return@runBlocking DiskCache(maxDiskCacheSize, imageCacheDir, showDebugLog)
         .apply { init() }
-    }
-
-    client = HttpClient(CIO) {
-      engine {
-        endpoint.apply {
-          keepAliveTime = 5000
-          connectTimeout = 5000
-          connectRetryAttempts = 5
-        }
-      }
     }
   }
 
@@ -97,7 +88,10 @@ class CachingImageLoader(
         val transformedBufferedImage = if (fromCache == null) {
           debugPrint("image ($url) does not exist in the cache")
 
-          val downloadResult = downloadImage(url)
+          val future = CompletableFuture<Pair<CacheValue, ImageType>?>()
+          downloadImage(url, future)
+
+          val downloadResult = future.await()
           if (downloadResult == null) {
             onError(loaderRequest)
             return@launch
@@ -135,6 +129,9 @@ class CachingImageLoader(
             loaderRequest.channel.send(image)
           }
         }
+      } catch (error: Throwable) {
+        error.printStackTrace()
+        onError(loaderRequest)
       } finally {
         activeRequests.remove(url)
       }
@@ -201,21 +198,22 @@ class CachingImageLoader(
     }
   }
 
-  private suspend fun downloadImage(imageUrl: String): Pair<CacheValue, ImageType>? {
-    try {
-      return client.call(imageUrl).response.use { response ->
-        if (response.status != HttpStatusCode.OK) {
-          debugPrint("Response status is not OK! (${response.status})")
-          return@use null
+  private fun downloadImage(imageUrl: String, future: CompletableFuture<Pair<CacheValue, ImageType>?>) {
+    client.fetchImage(imageUrl) { response ->
+      try {
+        if (response == null) {
+          debugPrint("Couldn't retrieve response")
+          future.complete(null)
+          return@fetchImage
         }
 
-        val contentTypeString = response.headers.get(HttpHeaders.ContentType)
-        if (contentTypeString == null) {
-          debugPrint("Content-type is null!")
-          return@use null
+        if (response.statusCode != HttpStatusCode.OK.value) {
+          debugPrint("Response status is not OK! (${response.statusCode})")
+          future.complete(null)
+          return@fetchImage
         }
 
-        val imageType = when (contentTypeString) {
+        val imageType = when (response.contentType) {
           "image/png" -> ImageType.Png
           "image/jpeg",
           "image/jpg" -> ImageType.Jpg
@@ -224,7 +222,8 @@ class CachingImageLoader(
 
         if (imageType == null) {
           debugPrint("Content-type is not supported")
-          return@use null
+          future.complete(null)
+          return@fetchImage
         }
 
         val imageFile = createCachedImageFile(imageUrl)
@@ -233,11 +232,11 @@ class CachingImageLoader(
           response.content.copyTo(it)
         }
 
-        return@use CacheValue(imageFile, emptyArray()) to imageType
+        future.complete(CacheValue(imageFile, emptyArray()) to imageType)
+      } catch (error: Throwable) {
+        error.printStackTrace()
+        future.complete(null)
       }
-    } catch (error: Throwable) {
-      error.printStackTrace()
-      return null
     }
   }
 

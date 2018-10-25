@@ -1,3 +1,5 @@
+package core
+
 import javafx.scene.image.Image
 import kotlinx.coroutines.channels.SendChannel
 

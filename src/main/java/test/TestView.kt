@@ -1,3 +1,7 @@
+package test
+
+import CachingImageLoader
+import core.SaveStrategy
 import javafx.scene.image.ImageView
 import tornadofx.*
 import java.util.concurrent.atomic.AtomicInteger
