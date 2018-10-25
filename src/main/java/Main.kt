@@ -42,13 +42,14 @@ class TestView : View() {
           imageLoader.newRequest()
             .load(getImage())
             .transformers(CachingImageLoader.TransformerBuilder().fitCenter(imageView))
+            .saveStrategy(SaveStrategy.SaveTransformedImage)
             .into(imageView)
         }
       }
     }
     imageView = imageview {
-      fitWidth = 100.0
-      fitHeight = 100.0
+      fitWidth = 600.0
+      fitHeight = 600.0
     }
 
   }

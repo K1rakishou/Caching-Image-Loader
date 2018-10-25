@@ -16,7 +16,7 @@ class ResizeTransformer(
     val height = newHeight.toInt()
 
     val tmp = inputImage.getScaledInstance(width, height, Image.SCALE_SMOOTH)
-    val resizedImage = BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB)
+    val resizedImage = BufferedImage(width, height, inputImage.type)
 
     val g2d = resizedImage.createGraphics()
     try {
