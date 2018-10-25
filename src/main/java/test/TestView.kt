@@ -10,9 +10,9 @@ fun main(args: Array<String>) {
   launch<TestApp>(args)
 }
 
-class TestApp : App(TestView::class)
+internal class TestApp : App(TestView::class)
 
-class TestView : View() {
+internal class TestView : View() {
   private val imageLoader = CachingImageLoader()
   private val counter = AtomicInteger(0)
   private val images = listOf(
