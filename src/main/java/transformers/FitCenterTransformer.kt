@@ -8,6 +8,8 @@ class FitCenterTransformer(
   private val newHeight: Double
 ) : ImageTransformer {
 
+  override val type = TransformationType.FitCenter
+
   override fun transform(inputImage: BufferedImage): BufferedImage {
     val sourceWidth = inputImage.width.toDouble()
     val sourceHeight = inputImage.height.toDouble()
@@ -28,15 +30,12 @@ class FitCenterTransformer(
     val scaledWidth = newXScale * sourceWidth
     val scaledHeight = newYScale * sourceHeight
 
-    val left = (sourceWidth - scaledWidth) / 2
-    val top = (sourceHeight - scaledHeight) / 2
+    val left = ((sourceWidth - scaledWidth) / 2).toInt()
+    val top = ((sourceHeight - scaledHeight) / 2).toInt()
+    val width = scaledWidth.toInt()
+    val height = scaledHeight.toInt()
 
-    return inputImage.getSubimage(
-      left.toInt(),
-      top.toInt(),
-      scaledWidth.toInt(),
-      scaledHeight.toInt()
-    )
+    val centeredImage = inputImage.getSubimage(left, top, width, height)
+    return ResizeTransformer(newWidth, newHeight).transform(centeredImage)
   }
-
 }

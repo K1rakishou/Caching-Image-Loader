@@ -1,9 +1,8 @@
 package cache
 
 interface Cache<K, V> {
-  fun store(key: K, value: V)
-  fun get(key: K): V?
-  fun contains(key: K): Boolean
-  fun remove(key: K)
-  fun clear()
+  suspend fun store(key: K, value: V)
+  suspend fun get(key: K): V?
+  suspend fun remove(key: K)
+  suspend fun clear()
 }

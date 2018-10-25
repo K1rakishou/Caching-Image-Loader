@@ -9,6 +9,8 @@ class ResizeTransformer(
   private val newHeight: Double
 ) : ImageTransformer {
 
+  override val type = TransformationType.Resize
+
   override fun transform(inputImage: BufferedImage): BufferedImage {
     val width = newWidth.toInt()
     val height = newHeight.toInt()

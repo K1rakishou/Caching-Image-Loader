@@ -39,13 +39,16 @@ class TestView : View() {
     hbox {
       button("LOAD IMAGE") {
         action {
-          imageLoader.loadImageInto(getImage(), imageView)
+          imageLoader.newRequest()
+            .load(getImage())
+            .transformers(CachingImageLoader.TransformerBuilder().fitCenter(imageView))
+            .into(imageView)
         }
       }
     }
     imageView = imageview {
-      fitWidth = 600.0
-      fitHeight = 1100.0
+      fitWidth = 100.0
+      fitHeight = 100.0
     }
 
   }

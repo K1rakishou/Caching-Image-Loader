@@ -1,3 +1,4 @@
+import cache.CacheValue
 import cache.DiskCache
 import io.ktor.client.HttpClient
 import io.ktor.client.call.call
@@ -9,24 +10,30 @@ import javafx.scene.image.Image
 import javafx.scene.image.ImageView
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.channels.SendChannel
-import kotlinx.coroutines.channels.actor
 import kotlinx.coroutines.io.jvm.javaio.copyTo
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import transformers.ImageTransformer
 import transformers.FitCenterTransformer
+import transformers.ResizeTransformer
+import transformers.TransformationType
+import java.awt.image.BufferedImage
 import java.io.File
+import java.lang.RuntimeException
 import java.lang.ref.WeakReference
 import javax.imageio.ImageIO
 import kotlin.coroutines.CoroutineContext
 
+
 class CachingImageLoader(
   maxDiskCacheSize: Long = defaultDiskCacheSize,
   cacheDir: File = File(System.getProperty("user.dir")),
-  val dispatcher: CoroutineDispatcher = newFixedThreadPoolContext(2, "caching-image-loader")
+  private val dispatcher: CoroutineDispatcher = newFixedThreadPoolContext(2, "caching-image-loader"),
+  private val showDebugLog: Boolean = true
 ) : CoroutineScope {
   private val activeRequests = mutableSetOf<String>()
-
-  private var job: Job
-  private var requestsActor: SendChannel<Request>
+  private val mutex = Mutex()
+  private var job = Job()
 
   private var diskCache: DiskCache
   private var imageCacheDir: File
@@ -43,7 +50,10 @@ class CachingImageLoader(
       }
     }
 
-    diskCache = DiskCache(maxDiskCacheSize, imageCacheDir).apply { init() }
+    diskCache = runBlocking {
+      return@runBlocking DiskCache(maxDiskCacheSize, imageCacheDir, showDebugLog)
+        .apply { init() }
+    }
 
     client = HttpClient(CIO) {
       engine {
@@ -54,24 +64,116 @@ class CachingImageLoader(
         }
       }
     }
+  }
 
-    job = Job()
+  private fun debugPrint(msg: String) {
+    if (showDebugLog) {
+      println(msg)
+    }
+  }
 
-    requestsActor = actor(job, capacity = 16) {
-      for (request in channel) {
-        try {
-          when (request) {
-            is Request.LoadAndShow -> processLoadAndShowRequest(request.url, request.imageView)
-            is Request.Load -> {
-              val result = processLoadRequest(request.url)
-              request.responseChannel.send(result)
+  fun newRequest(): RequestBuilder {
+    return RequestBuilder(this)
+  }
+
+  private fun runRequest(
+    loaderRequest: LoaderRequest,
+    saveStrategy: SaveStrategy,
+    url: String?,
+    transformers: MutableList<ImageTransformer>
+  ) {
+    if (url == null) {
+      throw RuntimeException("Url is not set!")
+    }
+
+    launch(dispatcher) {
+      if (checkRequestAlreadyInProgress(url)) {
+        onError(loaderRequest)
+        return@launch
+      }
+
+      try {
+        val fromCache = diskCache.get(url)
+        val transformedBufferedImage = if (fromCache == null) {
+          debugPrint("image ($url) does not exist in the cache")
+
+          val downloadResult = downloadImage(url)
+          if (downloadResult == null) {
+            onError(loaderRequest)
+            return@launch
+          }
+
+          val (cacheValue, imageType) = downloadResult
+          val (transformedImage, appliedTransformations) = applyTransformers(transformers, cacheValue)
+
+          mutex.withLock {
+            when (saveStrategy) {
+              SaveStrategy.SaveOriginalImage -> diskCache.store(url, cacheValue)
+              SaveStrategy.SaveTransformedImage -> {
+                val result = ImageIO.write(transformedImage, imageType.value, cacheValue.file)
+                if (!result) {
+                  throw RuntimeException("Could not save image to disk!")
+                }
+
+                diskCache.store(url, CacheValue(cacheValue.file, appliedTransformations.toTypedArray()))
+              }
             }
           }
-        } finally {
-          activeRequests.remove(request.url)
+
+          transformedImage
+        } else {
+          debugPrint("image ($url) already exists in the cache")
+
+          val (transformedImage, _) = applyTransformers(transformers, fromCache)
+          transformedImage
         }
+
+        val image = SwingFXUtils.toFXImage(transformedBufferedImage, null)
+
+        when (loaderRequest) {
+          is LoaderRequest.DownloadAsyncRequest -> {
+            loaderRequest.channel.send(image)
+          }
+        }
+      } finally {
+        activeRequests.remove(url)
       }
     }
+  }
+
+  private suspend fun onError(loaderRequest: LoaderRequest) {
+    when (loaderRequest) {
+      is LoaderRequest.DownloadAsyncRequest -> {
+        loaderRequest.channel.send(null)
+      }
+    }
+  }
+
+  private fun applyTransformers(
+    transformers: MutableList<ImageTransformer>,
+    cacheValue: CacheValue
+  ): Pair<BufferedImage, List<TransformationType>> {
+    val image = cacheValue.file.inputStream().use { Image(it) }
+    val bufferedImage = SwingFXUtils.fromFXImage(image, null)
+
+    var outImage: BufferedImage? = null
+    val appliedTransformations = mutableListOf<TransformationType>()
+
+    for (transformer in transformers) {
+      val inImage = outImage ?: bufferedImage
+
+      //do not apply a transformation if it has already been applied
+      outImage = if (transformer.type in cacheValue.appliedTransformations) {
+        inImage
+      } else {
+        transformer.transform(inImage)
+      }
+
+      appliedTransformations += transformer.type
+    }
+
+    val resultImage = outImage ?: bufferedImage
+    return resultImage to appliedTransformations
   }
 
   fun shutdown() {
@@ -82,125 +184,56 @@ class CachingImageLoader(
   //for tests
   fun shutdownAndClearEverything() {
     shutdown()
-    diskCache.clear()
-  }
 
-  fun loadImageInto(url: String, imageView: ImageView) {
-    if (checkRequestAlreadyInProgress(url)) {
-      return
-    }
-
-    launch(dispatcher) {
-      requestsActor.send(Request.LoadAndShow(url, WeakReference(imageView)))
+    runBlocking {
+      diskCache.clear()
     }
   }
 
-  fun loadImage(url: String, _callback: (Image) -> Unit) {
-    if (checkRequestAlreadyInProgress(url)) {
-      return
-    }
-
-    val callback = WeakReference(_callback)
-
-    launch(dispatcher) {
-      val receiveChannel = Channel<File?>(capacity = 1)
-      requestsActor.send(Request.Load(url, receiveChannel))
-
-      val imageFile = receiveChannel.receive()
-      if (imageFile == null) {
-        return@launch
+  private suspend fun checkRequestAlreadyInProgress(url: String): Boolean {
+    return mutex.withLock {
+      if (!activeRequests.add(url)) {
+        debugPrint("Already in progress")
+        return@withLock true
       }
 
-      val image = imageFile.inputStream().use {
-        Image(it)
-      }
-
-      callback.get()?.invoke(image)
+      return@withLock false
     }
   }
 
-  fun getImage(url: String): Deferred<Image?> {
-    return async(dispatcher) {
-      if (checkRequestAlreadyInProgress(url)) {
-        return@async null
-      }
-
-      val receiveChannel = Channel<File?>(capacity = 1)
-      requestsActor.send(Request.Load(url, receiveChannel))
-
-      val imageFile = receiveChannel.receive()
-      if (imageFile == null) {
-        return@async null
-      }
-
-      return@async imageFile.inputStream().use {
-        Image(it)
-      }
-    }
-  }
-
-  private fun checkRequestAlreadyInProgress(url: String): Boolean {
-    if (!activeRequests.add(url)) {
-      println("Already in progress")
-      return true
-    }
-
-    return false
-  }
-
-  private suspend fun processLoadAndShowRequest(imageUrl: String, imageView: WeakReference<ImageView>) {
+  private suspend fun downloadImage(imageUrl: String): Pair<CacheValue, ImageType>? {
     try {
-      val imageFile = downloadImage(imageUrl)
-      if (imageFile != null) {
-        setImage(imageView, imageFile)
-      } else {
-        setImageError(imageView)
-      }
-    } catch (error: Throwable) {
-      error.printStackTrace()
-      setImageError(imageView)
-    }
-  }
-
-  private suspend fun processLoadRequest(imageUrl: String): File? {
-    return downloadImage(imageUrl)
-  }
-
-  private suspend fun downloadImage(imageUrl: String): File? {
-    try {
-      if (diskCache.contains(imageUrl)) {
-        println("image ($imageUrl) exists in the cache")
-        return diskCache.get(imageUrl)
-      }
-
-      println("image ($imageUrl) does not exist in the cache")
-
       return client.call(imageUrl).response.use { response ->
         if (response.status != HttpStatusCode.OK) {
-          println("Response status is not OK! (${response.status})")
+          debugPrint("Response status is not OK! (${response.status})")
           return@use null
         }
 
         val contentTypeString = response.headers.get(HttpHeaders.ContentType)
         if (contentTypeString == null) {
-          println("Content-type is null!")
+          debugPrint("Content-type is null!")
           return@use null
         }
 
-        if (contentTypeString != "image/png" && contentTypeString != "image/jpeg" && contentTypeString != "image/jpg") {
-          println("Content-type is not supported")
+        val imageType = when (contentTypeString) {
+          "image/png" -> ImageType.Png
+          "image/jpeg",
+          "image/jpg" -> ImageType.Jpg
+          else -> null
+        }
+
+        if (imageType == null) {
+          debugPrint("Content-type is not supported")
           return@use null
         }
 
-        val fileName = "${System.nanoTime()}_${imageUrl.hashCode().toUInt()}.cached"
-        val imageFile = File(imageCacheDir, fileName)
+        val imageFile = createCachedImageFile(imageUrl)
 
         imageFile.outputStream().use {
           response.content.copyTo(it)
         }
 
-        diskCache.store(imageUrl, imageFile)
-        return@use imageFile
+        return@use CacheValue(imageFile, emptyArray()) to imageType
       }
     } catch (error: Throwable) {
       error.printStackTrace()
@@ -208,30 +241,103 @@ class CachingImageLoader(
     }
   }
 
+  private fun createCachedImageFile(imageUrl: String): File {
+    val fileName = "${System.nanoTime()}_${imageUrl.hashCode().toUInt()}.cached"
+    return File(imageCacheDir, fileName)
+  }
+
   private fun setImageError(imageView: WeakReference<ImageView>) {
     //TODO
   }
 
-  private fun setImage(imageView: WeakReference<ImageView>, file: File) {
+  private fun setImage(imageView: WeakReference<ImageView>, image: Image) {
     imageView.get()?.let { iv ->
-      file.inputStream().use { fileStream ->
-        val bufferedImage = ImageIO.read(fileStream)
-        val outImage = FitCenterTransformer(iv.fitWidth, iv.fitHeight).transform(bufferedImage)
-        iv.image = SwingFXUtils.toFXImage(outImage, null)
-      }
+      iv.image = image
     }
   }
 
-  sealed class Request(val url: String) {
-    class LoadAndShow(
-      url: String,
-      val imageView: WeakReference<ImageView>
-    ) : Request(url)
+  inner class RequestBuilder(
+    private val coroutineScope: CoroutineScope
+  ) {
+    private var url: String? = null
+    private var saveStrategy = SaveStrategy.SaveOriginalImage
+    private val transformers = mutableListOf<ImageTransformer>()
 
-    class Load(
-      url: String,
-      val responseChannel: Channel<File?>
-    ) : Request(url)
+    fun load(url: String): RequestBuilder {
+      this.url = url
+      return this
+    }
+
+    fun transformers(builder: TransformerBuilder): RequestBuilder {
+      transformers.addAll(builder.transformers)
+      return this
+    }
+
+    fun saveStrategy(saveStrategy: SaveStrategy): RequestBuilder {
+      this.saveStrategy = saveStrategy
+      return this
+    }
+
+    fun getAsync(): Deferred<Image?> {
+      return coroutineScope.async { run() }
+    }
+
+    fun into(_imageView: ImageView) {
+      val imageView = WeakReference(_imageView)
+
+      launch {
+        val image = run()
+        image?.let { img ->
+          setImage(imageView, img)
+        }
+      }
+    }
+
+    private suspend fun run(): Image? {
+      val responseChannel = Channel<Image?>(capacity = 1)
+      runRequest(LoaderRequest.DownloadAsyncRequest(responseChannel), saveStrategy, url, transformers)
+      return responseChannel.receive()
+    }
+  }
+
+  class TransformerBuilder {
+    val transformers = mutableListOf<ImageTransformer>()
+
+    fun fitCenter(width: Int, height: Int): TransformerBuilder {
+      if (transformers.any { it is FitCenterTransformer }) {
+        throw IllegalStateException("FitCenterTransformer already applied!")
+      }
+
+      transformers.add(FitCenterTransformer(width.toDouble(), height.toDouble()) as ImageTransformer)
+      return this
+    }
+
+    fun fitCenter(view: ImageView): TransformerBuilder {
+      if (transformers.any { it is FitCenterTransformer }) {
+        throw IllegalStateException("FitCenterTransformer already applied!")
+      }
+
+      transformers.add(FitCenterTransformer(view.fitWidth, view.fitHeight) as ImageTransformer)
+      return this
+    }
+
+    fun resize(newWidth: Int, newHeight: Int): TransformerBuilder {
+      if (transformers.any { it is ResizeTransformer }) {
+        throw IllegalStateException("ResizeTransformer already applied!")
+      }
+
+      transformers.add(ResizeTransformer(newWidth.toDouble(), newHeight.toDouble()) as ImageTransformer)
+      return this
+    }
+
+    fun resize(newWidth: Double, newHeight: Double): TransformerBuilder {
+      if (transformers.any { it is ResizeTransformer }) {
+        throw IllegalStateException("ResizeTransformer already applied!")
+      }
+
+      transformers.add(ResizeTransformer(newWidth, newHeight) as ImageTransformer)
+      return this
+    }
   }
 
   companion object {
