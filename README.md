@@ -18,7 +18,7 @@ By default it will create a subdirectory named `image-cache` in the folder where
 
 
 Now lets apply some transformations:
-- CenterCrop: will scale the image down maintaining the original aspect ratio so the image will fit entirely in the ImageView
+- CenterCrop: will scale the image down so that one of the image's dimensions fits target dimensions and then crop out the center of the image
 - CircleCrop: will draw the image inside a circle 
 
 Now also store it in the cache with already applied transformations so we don't have to apply them every time we load this image from the cache:
