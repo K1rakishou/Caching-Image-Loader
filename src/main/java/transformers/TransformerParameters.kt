@@ -1,3 +1,0 @@
-package transformers
-
-interface TransformerParameters

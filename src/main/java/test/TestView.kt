@@ -1,9 +1,12 @@
 package test
 
-import CachingImageLoader
+import builders.CircleCropParametersBuilder
+import builders.TransformerBuilder
+import core.CachingImageLoader
 import core.SaveStrategy
 import javafx.scene.image.ImageView
 import tornadofx.*
+import java.awt.Color
 import java.util.concurrent.atomic.AtomicInteger
 
 fun main(args: Array<String>) {
@@ -45,7 +48,15 @@ internal class TestView : View() {
         action {
           imageLoader.newRequest()
             .load(getImage())
-            .transformers(CachingImageLoader.TransformerBuilder().fitCenter(imageView))
+            .transformers(
+              TransformerBuilder()
+                .fitCenter(imageView)
+                .circleCrop(
+                  CircleCropParametersBuilder()
+                    .backgroundColor(Color.RED)
+                    .stroke(10f, Color.GREEN)
+                )
+            )
             .saveStrategy(SaveStrategy.SaveTransformedImage)
             .into(imageView)
         }

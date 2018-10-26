@@ -1,8 +1,8 @@
+package core
+
+import builders.TransformerBuilder
 import cache.CacheValue
 import cache.DiskCache
-import core.ImageType
-import core.LoaderRequest
-import core.SaveStrategy
 import http.DefaultHttpClient
 import http.HttpClientFacade
 import io.ktor.http.HttpStatusCode
@@ -10,18 +10,13 @@ import javafx.embed.swing.SwingFXUtils
 import javafx.scene.image.Image
 import javafx.scene.image.ImageView
 import kotlinx.coroutines.*
-import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.future.await
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import transformers.FitCenterTransformer
-import transformers.ImageTransformer
-import transformers.ResizeTransformer
-import transformers.TransformationType
+import transformations.ImageTransformation
+import transformations.TransformationType
 import java.awt.image.BufferedImage
 import java.io.File
 import java.lang.ref.WeakReference
-import java.util.concurrent.CompletableFuture
 import javax.imageio.ImageIO
 import kotlin.coroutines.CoroutineContext
 
@@ -64,14 +59,14 @@ class CachingImageLoader(
   }
 
   fun newRequest(): RequestBuilder {
-    return RequestBuilder(this)
+    return RequestBuilder()
   }
 
   private fun runRequest(
     loaderRequest: LoaderRequest,
     saveStrategy: SaveStrategy,
     url: String?,
-    transformers: MutableList<ImageTransformer>
+    transformations: MutableList<ImageTransformation>
   ) {
     if (url == null) {
       throw RuntimeException("Url is not set!")
@@ -79,7 +74,7 @@ class CachingImageLoader(
 
     launch(dispatcher) {
       if (checkRequestAlreadyInProgress(url)) {
-        onError(loaderRequest)
+        onInProgress(loaderRequest)
         return@launch
       }
 
@@ -88,23 +83,22 @@ class CachingImageLoader(
         val transformedBufferedImage = if (fromCache == null) {
           debugPrint("image ($url) does not exist in the cache")
 
-          val future = CompletableFuture<Pair<CacheValue, ImageType>?>()
+          val future = CompletableDeferred<CacheValue?>()
           downloadImage(url, future)
 
-          val downloadResult = future.await()
-          if (downloadResult == null) {
+          val cacheValue = future.await()
+          if (cacheValue == null) {
             onError(loaderRequest)
             return@launch
           }
 
-          val (cacheValue, imageType) = downloadResult
-          val (transformedImage, appliedTransformations) = applyTransformers(transformers, cacheValue)
+          val (transformedImage, appliedTransformations) = applyTransformations(transformations, cacheValue)
 
           mutex.withLock {
             when (saveStrategy) {
               SaveStrategy.SaveOriginalImage -> diskCache.store(url, cacheValue)
               SaveStrategy.SaveTransformedImage -> {
-                val result = ImageIO.write(transformedImage, imageType.value, cacheValue.file)
+                val result = ImageIO.write(transformedImage, ImageType.Png.value, cacheValue.file)
                 if (!result) {
                   throw RuntimeException("Could not save image to disk!")
                 }
@@ -118,17 +112,12 @@ class CachingImageLoader(
         } else {
           debugPrint("image ($url) already exists in the cache")
 
-          val (transformedImage, _) = applyTransformers(transformers, fromCache)
+          val (transformedImage, _) = applyTransformations(transformations, fromCache)
           transformedImage
         }
 
         val image = SwingFXUtils.toFXImage(transformedBufferedImage, null)
-
-        when (loaderRequest) {
-          is LoaderRequest.DownloadAsyncRequest -> {
-            loaderRequest.channel.send(image)
-          }
-        }
+        onSuccess(loaderRequest, image)
       } catch (error: Throwable) {
         error.printStackTrace()
         onError(loaderRequest)
@@ -138,16 +127,41 @@ class CachingImageLoader(
     }
   }
 
-  private suspend fun onError(loaderRequest: LoaderRequest) {
+  private fun onInProgress(loaderRequest: LoaderRequest) {
     when (loaderRequest) {
       is LoaderRequest.DownloadAsyncRequest -> {
-        loaderRequest.channel.send(null)
+        loaderRequest.future.complete(null)
+      }
+      is LoaderRequest.DownloadAndShowRequest -> {
+        //do nothing
       }
     }
   }
 
-  private fun applyTransformers(
-    transformers: MutableList<ImageTransformer>,
+  private fun onError(loaderRequest: LoaderRequest) {
+    when (loaderRequest) {
+      is LoaderRequest.DownloadAsyncRequest -> {
+        loaderRequest.future.complete(null)
+      }
+      is LoaderRequest.DownloadAndShowRequest -> {
+        setImageError(loaderRequest.imageView)
+      }
+    }
+  }
+
+  private fun onSuccess(loaderRequest: LoaderRequest, image: Image?) {
+    when (loaderRequest) {
+      is LoaderRequest.DownloadAsyncRequest -> {
+        loaderRequest.future.complete(image)
+      }
+      is LoaderRequest.DownloadAndShowRequest -> {
+        setImage(loaderRequest.imageView, image)
+      }
+    }
+  }
+
+  private fun applyTransformations(
+    transformations: MutableList<ImageTransformation>,
     cacheValue: CacheValue
   ): Pair<BufferedImage, List<TransformationType>> {
     val image = cacheValue.file.inputStream().use { Image(it) }
@@ -156,17 +170,19 @@ class CachingImageLoader(
     var outImage: BufferedImage? = null
     val appliedTransformations = mutableListOf<TransformationType>()
 
-    for (transformer in transformers) {
+    for (transformation in transformations) {
       val inImage = outImage ?: bufferedImage
 
       //do not apply a transformation if it has already been applied
-      outImage = if (transformer.type in cacheValue.appliedTransformations) {
+      outImage = if (transformation.type in cacheValue.appliedTransformations) {
+        debugPrint("transformation (${transformation.type.name}) has already been applied")
         inImage
       } else {
-        transformer.transform(inImage)
+        debugPrint("Applying transformation (${transformation.type.name})")
+        transformation.transform(inImage)
       }
 
-      appliedTransformations += transformer.type
+      appliedTransformations += transformation.type
     }
 
     val resultImage = outImage ?: bufferedImage
@@ -198,7 +214,7 @@ class CachingImageLoader(
     }
   }
 
-  private fun downloadImage(imageUrl: String, future: CompletableFuture<Pair<CacheValue, ImageType>?>) {
+  private fun downloadImage(imageUrl: String, future: CompletableDeferred<CacheValue?>) {
     client.fetchImage(imageUrl) { response ->
       try {
         if (response == null) {
@@ -232,7 +248,7 @@ class CachingImageLoader(
           response.content.copyTo(it)
         }
 
-        future.complete(CacheValue(imageFile, emptyArray()) to imageType)
+        future.complete(CacheValue(imageFile, emptyArray()))
       } catch (error: Throwable) {
         error.printStackTrace()
         future.complete(null)
@@ -249,18 +265,18 @@ class CachingImageLoader(
     //TODO
   }
 
-  private fun setImage(imageView: WeakReference<ImageView>, image: Image) {
+  private fun setImage(imageView: WeakReference<ImageView>, image: Image?) {
     imageView.get()?.let { iv ->
-      iv.image = image
+      image?.let { img ->
+        iv.image = img
+      }
     }
   }
 
-  inner class RequestBuilder(
-    private val coroutineScope: CoroutineScope
-  ) {
+  inner class RequestBuilder {
     private var url: String? = null
     private var saveStrategy = SaveStrategy.SaveOriginalImage
-    private val transformers = mutableListOf<ImageTransformer>()
+    private val transformers = mutableListOf<ImageTransformation>()
 
     fun load(url: String): RequestBuilder {
       this.url = url
@@ -268,7 +284,7 @@ class CachingImageLoader(
     }
 
     fun transformers(builder: TransformerBuilder): RequestBuilder {
-      transformers.addAll(builder.transformers)
+      transformers.addAll(builder.getTransformers())
       return this
     }
 
@@ -277,65 +293,14 @@ class CachingImageLoader(
       return this
     }
 
-    fun getAsync(): Deferred<Image?> {
-      return coroutineScope.async { run() }
+    fun getAsync(): CompletableDeferred<Image?> {
+      val future = CompletableDeferred<Image?>()
+      runRequest(LoaderRequest.DownloadAsyncRequest(future), saveStrategy, url, transformers)
+      return future
     }
 
-    fun into(_imageView: ImageView) {
-      val imageView = WeakReference(_imageView)
-
-      launch {
-        val image = run()
-        image?.let { img ->
-          setImage(imageView, img)
-        }
-      }
-    }
-
-    private suspend fun run(): Image? {
-      val responseChannel = Channel<Image?>(capacity = 1)
-      runRequest(LoaderRequest.DownloadAsyncRequest(responseChannel), saveStrategy, url, transformers)
-      return responseChannel.receive()
-    }
-  }
-
-  class TransformerBuilder {
-    val transformers = mutableListOf<ImageTransformer>()
-
-    fun fitCenter(width: Int, height: Int): TransformerBuilder {
-      if (transformers.any { it is FitCenterTransformer }) {
-        throw IllegalStateException("FitCenterTransformer already applied!")
-      }
-
-      transformers.add(FitCenterTransformer(width.toDouble(), height.toDouble()) as ImageTransformer)
-      return this
-    }
-
-    fun fitCenter(view: ImageView): TransformerBuilder {
-      if (transformers.any { it is FitCenterTransformer }) {
-        throw IllegalStateException("FitCenterTransformer already applied!")
-      }
-
-      transformers.add(FitCenterTransformer(view.fitWidth, view.fitHeight) as ImageTransformer)
-      return this
-    }
-
-    fun resize(newWidth: Int, newHeight: Int): TransformerBuilder {
-      if (transformers.any { it is ResizeTransformer }) {
-        throw IllegalStateException("ResizeTransformer already applied!")
-      }
-
-      transformers.add(ResizeTransformer(newWidth.toDouble(), newHeight.toDouble()) as ImageTransformer)
-      return this
-    }
-
-    fun resize(newWidth: Double, newHeight: Double): TransformerBuilder {
-      if (transformers.any { it is ResizeTransformer }) {
-        throw IllegalStateException("ResizeTransformer already applied!")
-      }
-
-      transformers.add(ResizeTransformer(newWidth, newHeight) as ImageTransformer)
-      return this
+    fun into(imageView: ImageView) {
+      runRequest(LoaderRequest.DownloadAndShowRequest(WeakReference(imageView)), saveStrategy, url, transformers)
     }
   }
 

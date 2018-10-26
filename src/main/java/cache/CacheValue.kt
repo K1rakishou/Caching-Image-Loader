@@ -1,6 +1,6 @@
 package cache
 
-import transformers.TransformationType
+import transformations.TransformationType
 import java.io.File
 
 class CacheValue(

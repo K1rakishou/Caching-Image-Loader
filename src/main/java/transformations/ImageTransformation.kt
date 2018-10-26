@@ -1,8 +1,8 @@
-package transformers
+package transformations
 
 import java.awt.image.BufferedImage
 
-interface ImageTransformer {
+interface ImageTransformation {
   val type: TransformationType
 
   fun transform(inputImage: BufferedImage): BufferedImage

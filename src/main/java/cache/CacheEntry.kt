@@ -1,6 +1,6 @@
 package cache
 
-import transformers.TransformationType
+import transformations.TransformationType
 
 class CacheEntry(
   val url: String,

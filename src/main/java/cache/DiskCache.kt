@@ -2,7 +2,7 @@ package cache
 
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import transformers.TransformationType
+import transformations.TransformationType
 import java.io.File
 import java.lang.NumberFormatException
 import java.lang.RuntimeException

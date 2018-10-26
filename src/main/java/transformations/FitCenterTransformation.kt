@@ -1,12 +1,12 @@
-package transformers
+package transformations
 
 import java.awt.image.BufferedImage
 
 
-class FitCenterTransformer(
+class FitCenterTransformation(
   private val newWidth: Double,
   private val newHeight: Double
-) : ImageTransformer {
+) : ImageTransformation {
 
   override val type = TransformationType.FitCenter
 
@@ -36,6 +36,6 @@ class FitCenterTransformer(
     val height = scaledHeight.toInt()
 
     val centeredImage = inputImage.getSubimage(left, top, width, height)
-    return ResizeTransformer(newWidth, newHeight).transform(centeredImage)
+    return ResizeTransformation(newWidth, newHeight).transform(centeredImage)
   }
 }

@@ -1,10 +1,12 @@
+import builders.TransformerBuilder
 import cache.CacheEntry
+import core.CachingImageLoader
 import core.SaveStrategy
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Test
-import transformers.TransformationType
+import transformations.TransformationType
 import java.io.File
 import kotlin.system.measureTimeMillis
 import kotlin.test.assertEquals
@@ -196,7 +198,7 @@ class CachingImageLoaderTest {
       val image = imageLoader.newRequest()
         .load(imageUrls[0])
         .transformers(
-          CachingImageLoader.TransformerBuilder()
+          TransformerBuilder()
             .fitCenter(100, 100))
         .saveStrategy(SaveStrategy.SaveOriginalImage)
         .getAsync()
@@ -219,7 +221,7 @@ class CachingImageLoaderTest {
       val image = imageLoader.newRequest()
         .load(imageUrls[0])
         .transformers(
-          CachingImageLoader.TransformerBuilder()
+          TransformerBuilder()
             .fitCenter(100, 100))
         .saveStrategy(SaveStrategy.SaveOriginalImage)
         .getAsync()
@@ -247,7 +249,7 @@ class CachingImageLoaderTest {
       val image = imageLoader.newRequest()
         .load(imageUrls[0])
         .transformers(
-          CachingImageLoader.TransformerBuilder()
+          TransformerBuilder()
             .fitCenter(100, 100))
         .saveStrategy(SaveStrategy.SaveTransformedImage)
         .getAsync()
@@ -271,7 +273,7 @@ class CachingImageLoaderTest {
       val image = imageLoader.newRequest()
         .load(imageUrls[0])
         .transformers(
-          CachingImageLoader.TransformerBuilder()
+          TransformerBuilder()
             .fitCenter(100, 100))
         .saveStrategy(SaveStrategy.SaveTransformedImage)
         .getAsync()
@@ -300,7 +302,7 @@ class CachingImageLoaderTest {
       val image = imageLoader.newRequest()
         .load(imageUrls[0])
         .transformers(
-          CachingImageLoader.TransformerBuilder()
+          TransformerBuilder()
             .fitCenter(200, 200)
             .resize(150, 150)
         )

@@ -1,13 +1,13 @@
-package transformers
+package transformations
 
 import java.awt.image.BufferedImage
 import java.awt.Image
 
 
-class ResizeTransformer(
+class ResizeTransformation(
   private val newWidth: Double,
   private val newHeight: Double
-) : ImageTransformer {
+) : ImageTransformation {
 
   override val type = TransformationType.Resize
 
@@ -15,8 +15,12 @@ class ResizeTransformer(
     val width = newWidth.toInt()
     val height = newHeight.toInt()
 
+    if (width == inputImage.width && height == inputImage.height) {
+      return inputImage
+    }
+
     val tmp = inputImage.getScaledInstance(width, height, Image.SCALE_SMOOTH)
-    val resizedImage = BufferedImage(width, height, inputImage.type)
+    val resizedImage = BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB)
 
     val g2d = resizedImage.createGraphics()
     try {
