@@ -8,4 +8,8 @@ class CacheEntry(
   val fileSize: Long,
   val addedOn: Long,
   val appliedTransformations: Array<TransformationType>
-)
+) {
+  override fun toString(): String {
+    return "[url: $url, fileName: $fileName]"
+  }
+}

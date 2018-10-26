@@ -2,7 +2,7 @@ package builders
 
 import javafx.scene.image.ImageView
 import transformations.CircleCropTransformation
-import transformations.FitCenterTransformation
+import transformations.CenterCropTransformation
 import transformations.ImageTransformation
 import transformations.ResizeTransformation
 
@@ -11,21 +11,21 @@ class TransformerBuilder {
 
   fun getTransformers(): MutableList<ImageTransformation> = transformers
 
-  fun fitCenter(width: Int, height: Int): TransformerBuilder {
-    if (transformers.any { it is FitCenterTransformation }) {
-      throw IllegalStateException("FitCenterTransformation already applied!")
+  fun centerCrop(width: Int, height: Int): TransformerBuilder {
+    if (transformers.any { it is CenterCropTransformation }) {
+      throw IllegalStateException("CenterCropTransformation already applied!")
     }
 
-    transformers.add(FitCenterTransformation(width.toDouble(), height.toDouble()) as ImageTransformation)
+    transformers.add(CenterCropTransformation(width.toDouble(), height.toDouble()) as ImageTransformation)
     return this
   }
 
-  fun fitCenter(view: ImageView): TransformerBuilder {
-    if (transformers.any { it is FitCenterTransformation }) {
-      throw IllegalStateException("FitCenterTransformation already applied!")
+  fun centerCrop(view: ImageView): TransformerBuilder {
+    if (transformers.any { it is CenterCropTransformation }) {
+      throw IllegalStateException("CenterCropTransformation already applied!")
     }
 
-    transformers.add(FitCenterTransformation(view.fitWidth, view.fitHeight) as ImageTransformation)
+    transformers.add(CenterCropTransformation(view.fitWidth, view.fitHeight) as ImageTransformation)
     return this
   }
 

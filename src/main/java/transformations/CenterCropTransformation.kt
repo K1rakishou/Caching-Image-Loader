@@ -3,12 +3,12 @@ package transformations
 import java.awt.image.BufferedImage
 
 
-class FitCenterTransformation(
+class CenterCropTransformation(
   private val newWidth: Double,
   private val newHeight: Double
 ) : ImageTransformation {
 
-  override val type = TransformationType.FitCenter
+  override val type = TransformationType.CenterCrop
 
   override fun transform(inputImage: BufferedImage): BufferedImage {
     val sourceWidth = inputImage.width.toDouble()

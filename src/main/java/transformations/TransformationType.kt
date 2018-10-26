@@ -1,7 +1,7 @@
 package transformations
 
 enum class TransformationType(val type: Int) {
-  FitCenter(0),
+  CenterCrop(0),
   Resize(1),
   CircleCrop(2);
 

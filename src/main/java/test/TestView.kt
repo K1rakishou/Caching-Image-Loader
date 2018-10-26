@@ -50,7 +50,7 @@ internal class TestView : View() {
             .load(getImage())
             .transformers(
               TransformerBuilder()
-                .fitCenter(imageView)
+                .centerCrop(imageView)
                 .circleCrop(
                   CircleCropParametersBuilder()
                     .backgroundColor(Color.RED)

@@ -1,13 +1,10 @@
 package cache
 
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import transformations.TransformationType
 import java.io.File
-import java.lang.NumberFormatException
-import java.lang.RuntimeException
 import java.nio.file.Files
 import java.nio.file.Path
+import java.util.concurrent.ConcurrentHashMap
 
 class DiskCache(
   private val maxDiskCacheSize: Long,
@@ -16,12 +13,11 @@ class DiskCache(
 ) : Cache<String, CacheValue> {
   private val separator = ";"
   private val appliedTransformSeparator = ","
-  private val mutex = Mutex()
-  private val cache = mutableMapOf<String, CacheEntry>()
+  private val cacheEntryMap = ConcurrentHashMap<String, CacheEntry>()
 
   private lateinit var cacheInfoFile: File
 
-  suspend fun init() {
+  fun init() {
     cacheInfoFile = File(cacheDir, "disk-cache.dat")
     if (cacheInfoFile.exists()) {
       readCacheFile()
@@ -38,11 +34,11 @@ class DiskCache(
     }
   }
 
-  private suspend fun readCacheFile() {
+  private fun readCacheFile() {
     val lines = cacheInfoFile.readLines()
     var hasCorruptedEntries = false
 
-    cache.clear()
+    cacheEntryMap.clear()
 
     for (line in lines) {
       val split = line.split(separator)
@@ -94,12 +90,12 @@ class DiskCache(
         }
       }
 
-      if (cache.containsKey(url)) {
+      if (cacheEntryMap.containsKey(url)) {
         hasCorruptedEntries = true
         continue
       }
 
-      cache[url] = CacheEntry(url, fileName, fileSize, addedOn, transformations)
+      cacheEntryMap[url] = CacheEntry(url, fileName, fileSize, addedOn, transformations)
     }
 
     if (getAllCachedFilesInCacheDir().size != lines.size) {
@@ -111,7 +107,7 @@ class DiskCache(
     }
   }
 
-  override suspend fun store(key: String, value: CacheValue) {
+  override fun store(key: String, value: CacheValue) {
     val file = value.file
     val fileLength = file.length()
     val totalCacheSize = calculateTotalCacheSize() + fileLength
@@ -129,15 +125,12 @@ class DiskCache(
       }
     }
 
-    mutex.withLock {
-      cache[key] = CacheEntry(key, file.name, fileLength, System.currentTimeMillis(), value.appliedTransformations)
-    }
-
+    cacheEntryMap[key] = CacheEntry(key, file.name, fileLength, System.currentTimeMillis(), value.appliedTransformations)
     updateCacheInfoFile()
   }
 
-  override suspend fun get(key: String): CacheValue? {
-    val cacheEntry = cache[key]
+  override fun get(key: String): CacheValue? {
+    val cacheEntry = cacheEntryMap[key]
     if (cacheEntry != null) {
       val fullImagePath = File(cacheDir, cacheEntry.fileName)
 
@@ -152,44 +145,34 @@ class DiskCache(
     return null
   }
 
-  override suspend fun remove(key: String) {
-    val cacheEntry = mutex.withLock {
-      val entry = cache[key]
-      if (entry == null) {
-        return@withLock null
-      }
-
-      cache.remove(key)
-      return@withLock entry
+  override fun remove(key: String) {
+    val cacheEntry = cacheEntryMap[key]
+    if (cacheEntry == null) {
+      return
     }
 
+    cacheEntryMap.remove(key)
     updateCacheInfoFile()
 
-    cacheEntry?.let { entry ->
-      val path = File(cacheDir, entry.fileName).toPath()
-      Files.deleteIfExists(path)
-    }
+    val path = File(cacheDir, cacheEntry.fileName).toPath()
+    Files.deleteIfExists(path)
   }
 
-  override suspend fun clear() {
-    mutex.withLock {
-      cache.clear()
+  override fun clear() {
+    cacheEntryMap.clear()
 
-      for (file in cacheDir.listFiles()) {
-        if (file.exists() && file.isFile) {
-          Files.deleteIfExists(file.toPath())
-        }
+    for (file in cacheDir.listFiles()) {
+      if (file.exists() && file.isFile) {
+        Files.deleteIfExists(file.toPath())
       }
-
-      cacheDir.delete()
     }
+
+    cacheDir.delete()
   }
 
-  private suspend fun getLastAddedCacheEntries(clearAtLeast: Long): List<CacheEntry> {
-    val sortedCacheEntries = mutex.withLock {
-      return@withLock cache.values
-        .sortedBy { it.addedOn }
-    }
+  private fun getLastAddedCacheEntries(clearAtLeast: Long): List<CacheEntry> {
+    val sortedCacheEntries = cacheEntryMap.values
+      .sortedBy { it.addedOn }
 
     var accumulatedSize = 0L
     val cacheEntryList = mutableListOf<CacheEntry>()
@@ -206,40 +189,36 @@ class DiskCache(
     return cacheEntryList
   }
 
-  private suspend fun calculateTotalCacheSize(): Long {
-    return mutex.withLock {
-      if (cache.values.isEmpty()) {
-        return@withLock 0L
-      }
-
-      return@withLock cache.values
-        .map { it.fileSize }
-        .reduce { acc, len -> acc + len }
+  private fun calculateTotalCacheSize(): Long {
+    if (cacheEntryMap.isEmpty()) {
+      return 0L
     }
+
+    return cacheEntryMap.values
+      .map { it.fileSize }
+      .reduce { acc, len -> acc + len }
   }
 
-  private suspend fun removeCorruptedEntries() {
+  private fun removeCorruptedEntries() {
     val filesInCacheDirectory = getAllCachedFilesInCacheDir()
     val toDeleteCacheEntries = mutableSetOf<CacheEntry>()
     val fileToDeletePaths = mutableListOf<Path>()
 
-    mutex.withLock {
-      for (file in filesInCacheDirectory) {
-        val fileName = file.name
+    for (file in filesInCacheDirectory) {
+      val fileName = file.name
 
-        for (cacheEntry in cache.values) {
-          if (fileName == cacheEntry.fileName) {
-            break
-          }
-
-          toDeleteCacheEntries += cacheEntry
+      for (cacheEntry in cacheEntryMap.values) {
+        if (fileName == cacheEntry.fileName) {
+          break
         }
-      }
 
-      for (toDeleteEntry in toDeleteCacheEntries) {
-        cache.remove(toDeleteEntry.url)
-        fileToDeletePaths.add(File(cacheDir, toDeleteEntry.fileName).toPath())
+        toDeleteCacheEntries += cacheEntry
       }
+    }
+
+    for (toDeleteEntry in toDeleteCacheEntries) {
+      cacheEntryMap.remove(toDeleteEntry.url)
+      fileToDeletePaths.add(File(cacheDir, toDeleteEntry.fileName).toPath())
     }
 
     fileToDeletePaths.forEach {
@@ -254,28 +233,26 @@ class DiskCache(
       .listFiles { _, fileName -> fileName != cacheInfoFile.name }
   }
 
-  private suspend fun updateCacheInfoFile() {
-    mutex.withLock {
-      val outString = buildString(256) {
-        for ((_, value) in cache) {
-          val appliedTransformations = value.appliedTransformations
-            .map { it.type }
-            .joinToString(appliedTransformSeparator)
+  private fun updateCacheInfoFile() {
+    val outString = buildString(256) {
+      for ((_, value) in cacheEntryMap) {
+        val appliedTransformations = value.appliedTransformations
+          .map { it.type }
+          .joinToString(appliedTransformSeparator)
 
-          append(value.url)
-          append(separator)
-          append(value.fileName)
-          append(separator)
-          append(value.fileSize)
-          append(separator)
-          append(value.addedOn)
-          append(separator)
-          append("($appliedTransformations)")
-          appendln()
-        }
+        append(value.url)
+        append(separator)
+        append(value.fileName)
+        append(separator)
+        append(value.fileSize)
+        append(separator)
+        append(value.addedOn)
+        append(separator)
+        append("($appliedTransformations)")
+        appendln()
       }
-
-      cacheInfoFile.writeText(outString)
     }
+
+    cacheInfoFile.writeText(outString)
   }
 }

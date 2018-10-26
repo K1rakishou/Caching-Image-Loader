@@ -5,9 +5,11 @@ import io.ktor.client.call.call
 import io.ktor.client.engine.cio.CIO
 import io.ktor.http.HttpHeaders
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.io.jvm.javaio.toInputStream
 import kotlinx.coroutines.launch
+import java.util.concurrent.CompletableFuture
 
 class DefaultHttpClient(
   private val showDebugLog: Boolean
@@ -30,23 +32,27 @@ class DefaultHttpClient(
     client.close()
   }
 
-  override fun fetchImage(url: String, response: (ResponseData?) -> Unit) {
-    launch {
+  override fun fetchImage(url: String): CompletableFuture<ResponseData?> {
+    val future = CompletableFuture<ResponseData?>()
+
+    launch(Dispatchers.IO) {
       try {
         client.call(url).response.use { response ->
           val contentTypeString = response.headers.get(HttpHeaders.ContentType)
           if (contentTypeString == null) {
             debugPrint("Content-type is null!")
-            response(null)
+            future.complete(null)
             return@launch
           }
 
-          response(ResponseData(response.status.value, contentTypeString, response.content.toInputStream()))
+          future.complete(ResponseData(response.status.value, contentTypeString, response.content.toInputStream()))
         }
       } catch (error: Throwable) {
-        response(null)
+        future.complete(null)
       }
     }
+
+    return future
   }
 
   private fun debugPrint(msg: String) {

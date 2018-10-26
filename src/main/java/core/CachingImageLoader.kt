@@ -10,6 +10,7 @@ import javafx.embed.swing.SwingFXUtils
 import javafx.scene.image.Image
 import javafx.scene.image.ImageView
 import kotlinx.coroutines.*
+import kotlinx.coroutines.future.await
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import transformations.ImageTransformation
@@ -29,8 +30,8 @@ class CachingImageLoader(
   private val dispatcher: CoroutineDispatcher = newFixedThreadPoolContext(2, "caching-image-loader")
 ) : CoroutineScope {
   private val activeRequests = mutableSetOf<String>()
+  private val job = Job()
   private val mutex = Mutex()
-  private var job = Job()
 
   private var diskCache: DiskCache
   private var imageCacheDir: File
@@ -72,39 +73,38 @@ class CachingImageLoader(
       throw RuntimeException("Url is not set!")
     }
 
-    launch(dispatcher) {
-      if (checkRequestAlreadyInProgress(url)) {
-        onInProgress(loaderRequest)
-        return@launch
-      }
+    if (checkRequestAlreadyInProgress(url)) {
+      onInProgress(loaderRequest)
+      return
+    }
 
+    launch(dispatcher) {
       try {
         val fromCache = diskCache.get(url)
         val transformedBufferedImage = if (fromCache == null) {
           debugPrint("image ($url) does not exist in the cache")
 
-          val future = CompletableDeferred<CacheValue?>()
-          downloadImage(url, future)
-
-          val cacheValue = future.await()
+          val cacheValue = withContext(Dispatchers.IO) { downloadImage(url) }
           if (cacheValue == null) {
             onError(loaderRequest)
             return@launch
           }
 
-          val (transformedImage, appliedTransformations) = applyTransformations(transformations, cacheValue)
+          val (transformedImage, appliedTransformations) = withContext(Dispatchers.IO) {
+            applyTransformations(transformations, cacheValue)
+          }
 
-          mutex.withLock {
-            when (saveStrategy) {
-              SaveStrategy.SaveOriginalImage -> diskCache.store(url, cacheValue)
-              SaveStrategy.SaveTransformedImage -> {
-                val result = ImageIO.write(transformedImage, ImageType.Png.value, cacheValue.file)
-                if (!result) {
-                  throw RuntimeException("Could not save image to disk!")
-                }
-
-                diskCache.store(url, CacheValue(cacheValue.file, appliedTransformations.toTypedArray()))
+          when (saveStrategy) {
+            SaveStrategy.SaveOriginalImage -> {
+              mutex.withLock { diskCache.store(url, cacheValue) }
+            }
+            SaveStrategy.SaveTransformedImage -> {
+              val result = ImageIO.write(transformedImage, ImageType.Png.value, cacheValue.file)
+              if (!result) {
+                throw RuntimeException("Could not save image to disk!")
               }
+
+              mutex.withLock { diskCache.store(url, CacheValue(cacheValue.file, appliedTransformations.toTypedArray())) }
             }
           }
 
@@ -128,6 +128,8 @@ class CachingImageLoader(
   }
 
   private fun onInProgress(loaderRequest: LoaderRequest) {
+    debugPrint("onInProgress")
+
     when (loaderRequest) {
       is LoaderRequest.DownloadAsyncRequest -> {
         loaderRequest.future.complete(null)
@@ -139,6 +141,8 @@ class CachingImageLoader(
   }
 
   private fun onError(loaderRequest: LoaderRequest) {
+    debugPrint("onError")
+
     when (loaderRequest) {
       is LoaderRequest.DownloadAsyncRequest -> {
         loaderRequest.future.complete(null)
@@ -150,6 +154,8 @@ class CachingImageLoader(
   }
 
   private fun onSuccess(loaderRequest: LoaderRequest, image: Image?) {
+    debugPrint("onSuccess")
+
     when (loaderRequest) {
       is LoaderRequest.DownloadAsyncRequest -> {
         loaderRequest.future.complete(image)
@@ -197,62 +203,63 @@ class CachingImageLoader(
   //for tests
   fun shutdownAndClearEverything() {
     shutdown()
+    clearCache()
+  }
 
+  //for tests
+  fun clearCache() {
     runBlocking {
       diskCache.clear()
     }
   }
 
-  private suspend fun checkRequestAlreadyInProgress(url: String): Boolean {
-    return mutex.withLock {
-      if (!activeRequests.add(url)) {
-        debugPrint("Already in progress")
-        return@withLock true
-      }
-
-      return@withLock false
+  @Synchronized
+  private fun checkRequestAlreadyInProgress(url: String): Boolean {
+    if (!activeRequests.add(url)) {
+      debugPrint("Already in progress")
+      return true
     }
+
+    debugPrint("Not in progress")
+    return false
   }
 
-  private fun downloadImage(imageUrl: String, future: CompletableDeferred<CacheValue?>) {
-    client.fetchImage(imageUrl) { response ->
-      try {
-        if (response == null) {
-          debugPrint("Couldn't retrieve response")
-          future.complete(null)
-          return@fetchImage
-        }
+  private suspend fun downloadImage(imageUrl: String): CacheValue? {
+    val response = client.fetchImage(imageUrl).await()
 
-        if (response.statusCode != HttpStatusCode.OK.value) {
-          debugPrint("Response status is not OK! (${response.statusCode})")
-          future.complete(null)
-          return@fetchImage
-        }
-
-        val imageType = when (response.contentType) {
-          "image/png" -> ImageType.Png
-          "image/jpeg",
-          "image/jpg" -> ImageType.Jpg
-          else -> null
-        }
-
-        if (imageType == null) {
-          debugPrint("Content-type is not supported")
-          future.complete(null)
-          return@fetchImage
-        }
-
-        val imageFile = createCachedImageFile(imageUrl)
-
-        imageFile.outputStream().use {
-          response.content.copyTo(it)
-        }
-
-        future.complete(CacheValue(imageFile, emptyArray()))
-      } catch (error: Throwable) {
-        error.printStackTrace()
-        future.complete(null)
+    try {
+      if (response == null) {
+        debugPrint("Couldn't retrieve response")
+        return null
       }
+
+      if (response.statusCode != HttpStatusCode.OK.value) {
+        debugPrint("Response status is not OK! (${response.statusCode})")
+        return null
+      }
+
+      val imageType = when (response.contentType) {
+        "image/png" -> ImageType.Png
+        "image/jpeg",
+        "image/jpg" -> ImageType.Jpg
+        else -> null
+      }
+
+      if (imageType == null) {
+        debugPrint("Content-type is not supported")
+        return null
+      }
+
+      val imageFile = createCachedImageFile(imageUrl)
+
+      imageFile.outputStream().use {
+        response.content.copyTo(it)
+      }
+
+      return CacheValue(imageFile, emptyArray())
+    } catch (error: Throwable) {
+      error.printStackTrace()
+      return null
     }
   }
 
