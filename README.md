@@ -21,7 +21,7 @@ Now lets apply some transformations:
 - CenterCrop: will scale the image down maintaining the original aspect ratio so the image will fit entirely in the ImageView
 - CircleCrop: will draw the image inside a circle 
 
-Lets also store it in the cache with applied transformation so we don't have to apply them every time we load this image from the cache:
+Now also store it in the cache with already applied transformations so we don't have to apply them every time we load this image from the cache:
 ```
 imageLoader.newRequest()
   .load("image_url.com/123.png")
