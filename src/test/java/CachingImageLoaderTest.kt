@@ -1,10 +1,11 @@
 import builders.TransformerBuilder
-import cache.CacheEntry
+import cache.CacheInfoRecord
 import core.CachingImageLoader
 import core.SaveStrategy
 import http.HttpClientFacade
 import http.ResponseData
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Before
@@ -36,6 +37,48 @@ class CachingImageLoaderTest {
     "https://i.imgur.com/6.jpg",
     "https://i.imgur.com/7.png"
   )
+
+  private fun listFiles(): Array<File> {
+    return cacheDir
+      .listFiles { _, fileName -> fileName != cacheInfoFile.name }
+  }
+
+  private fun readCacheInfoFile(): List<CacheInfoRecord> {
+    val lines = cacheInfoFile.readLines()
+    val cacheEntries = mutableListOf<CacheInfoRecord>()
+
+    for (line in lines) {
+      val split = line.split(";")
+      val (url, filePath, addedOnStr, appliedTransformationsStr) = split
+      assertTrue(url.isNotEmpty())
+
+      val file = File(filePath)
+      assertTrue(file.exists())
+      assertTrue(file.isFile)
+
+      val addedOn = addedOnStr.toLong()
+
+      val appliedTransformations = appliedTransformationsStr
+        .removePrefix("(")
+        .removeSuffix(")")
+
+      val transformations = when {
+        appliedTransformations.isEmpty() -> emptyArray()
+        else -> {
+          appliedTransformations
+            .split(",")
+            .map { it.toInt() }
+            .map { TransformationType.fromInt(it) }
+            .mapNotNull { it }
+            .toTypedArray()
+        }
+      }
+
+      cacheEntries += CacheInfoRecord(url, file, addedOn, transformations)
+    }
+
+    return cacheEntries
+  }
 
   @Before
   fun init() {
@@ -82,46 +125,6 @@ class CachingImageLoaderTest {
     if (::defaultImageLoader.isInitialized) {
       defaultImageLoader.shutdownAndClearEverything()
     }
-  }
-
-  private fun listFiles(): Array<File> {
-    return cacheDir
-      .listFiles { _, fileName -> fileName != cacheInfoFile.name }
-  }
-
-  private fun readCacheInfoFile(): List<CacheEntry> {
-    val lines = cacheInfoFile.readLines()
-    val cacheEntries = mutableListOf<CacheEntry>()
-
-    for (line in lines) {
-      val split = line.split(";")
-      val (url, fileName, fileSizeStr, addedOnStr, appliedTransformationsStr) = split
-
-      assertTrue(url.isNotEmpty())
-      assertTrue(fileName.isNotEmpty())
-      val fileSize = fileSizeStr.toLong()
-      val addedOn = addedOnStr.toLong()
-
-      val appliedTransformations = appliedTransformationsStr
-        .removePrefix("(")
-        .removeSuffix(")")
-
-      val transformations = when {
-        appliedTransformations.isEmpty() -> emptyArray()
-        else -> {
-          appliedTransformations
-            .split(",")
-            .map { it.toInt() }
-            .map { TransformationType.fromInt(it) }
-            .mapNotNull { it }
-            .toTypedArray()
-        }
-      }
-
-      cacheEntries += CacheEntry(url, fileName, fileSize, addedOn, transformations)
-    }
-
-    return cacheEntries
   }
 
   @Test
@@ -199,22 +202,27 @@ class CachingImageLoaderTest {
   @Test
   fun `test download images with not enough space in the cache`() {
     runBlocking {
-      repeat(20) {
-        val images = imageUrls
-          .map {
-            imageLoaderWithSmallCache.newRequest()
-              .load(it)
-              .getAsync()
-          }
-          .map { it.await() }
+      val images = imageUrls
+        .map {
+          imageLoaderWithSmallCache.newRequest()
+            .load(it)
+            .getAsync()
+        }
+        .map { it.await() }
 
-        assertEquals(7, images.size)
-        assertEquals(false, images.any { it == null })
-        assertEquals(1, listFiles().size)
-        val cacheEntries = readCacheInfoFile()
+      delay(1000)
 
-        assertEquals(1, cacheEntries.size)
-      }
+      assertEquals(7, images.size)
+      assertEquals(false, images.any { it == null })
+
+      val files = listFiles()
+
+      files.forEach { println("filename = ${it.name}") }
+
+      assertEquals(1, files.size)
+      val cacheEntries = readCacheInfoFile()
+
+      assertEquals(1, cacheEntries.size)
     }
   }
 

@@ -11,8 +11,6 @@ import javafx.scene.image.Image
 import javafx.scene.image.ImageView
 import kotlinx.coroutines.*
 import kotlinx.coroutines.future.await
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import transformations.ImageTransformation
 import transformations.TransformationType
 import java.awt.image.BufferedImage
@@ -31,7 +29,6 @@ class CachingImageLoader(
 ) : CoroutineScope {
   private val activeRequests = mutableSetOf<String>()
   private val job = Job()
-  private val mutex = Mutex()
 
   private var diskCache: DiskCache
   private var imageCacheDir: File
@@ -95,16 +92,14 @@ class CachingImageLoader(
           }
 
           when (saveStrategy) {
-            SaveStrategy.SaveOriginalImage -> {
-              mutex.withLock { diskCache.store(url, cacheValue) }
-            }
+            SaveStrategy.SaveOriginalImage -> diskCache.store(url, cacheValue)
             SaveStrategy.SaveTransformedImage -> {
               val result = ImageIO.write(transformedImage, ImageType.Png.value, cacheValue.file)
               if (!result) {
                 throw RuntimeException("Could not save image to disk!")
               }
 
-              mutex.withLock { diskCache.store(url, CacheValue(cacheValue.file, appliedTransformations.toTypedArray())) }
+              diskCache.store(url, CacheValue(cacheValue.file, appliedTransformations.toTypedArray()))
             }
           }
 
@@ -263,6 +258,7 @@ class CachingImageLoader(
     }
   }
 
+  //TODO: this should not create files in imageCacheDir
   private fun createCachedImageFile(imageUrl: String): File {
     val fileName = "${System.nanoTime()}_${imageUrl.hashCode().toUInt()}.cached"
     return File(imageCacheDir, fileName)

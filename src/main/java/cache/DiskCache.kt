@@ -1,68 +1,220 @@
 package cache
 
+import kotlinx.coroutines.*
+import kotlinx.coroutines.channels.SendChannel
+import kotlinx.coroutines.channels.actor
+import kotlinx.coroutines.channels.consumeEach
 import transformations.TransformationType
 import java.io.File
 import java.nio.file.Files
-import java.nio.file.Path
-import java.util.concurrent.ConcurrentHashMap
 
 class DiskCache(
   private val maxDiskCacheSize: Long,
   private val cacheDir: File,
-  private val showDebugLog: Boolean
-) : Cache<String, CacheValue> {
+  private val showDebugLog: Boolean,
+  private val dispatcher: CoroutineDispatcher = newFixedThreadPoolContext(1, "disk-cache")
+) : Cache<String, CacheValue>, CoroutineScope {
   private val separator = ";"
   private val appliedTransformSeparator = ","
-  private val cacheEntryMap = ConcurrentHashMap<String, CacheEntry>()
+  private val job = Job()
+  private val cacheInfoFile = File(cacheDir, "disk-cache.dat")
 
-  private lateinit var cacheInfoFile: File
+  private lateinit var cacheOperationsActor: SendChannel<CacheOperation>
 
-  fun init() {
-    cacheInfoFile = File(cacheDir, "disk-cache.dat")
-    if (cacheInfoFile.exists()) {
-      readCacheFile()
-    } else {
-      if (!cacheInfoFile.createNewFile()) {
-        throw RuntimeException("Could not create cache info file!")
+  override val coroutineContext = job
+
+  private fun cacheOperationsActor(): SendChannel<CacheOperation> {
+    val cacheEntryMap = hashMapOf<String, CacheInfoRecord>()
+
+    return actor() {
+      consumeEach { operation ->
+        when (operation) {
+          is CacheOperation.ReadCacheInfoFile -> {
+            innerReadCacheFile(cacheEntryMap)
+            operation.result.complete(Unit)
+          }
+          is CacheOperation.Store -> {
+            innerStore(operation.key, operation.cacheValue.file, operation.cacheValue.appliedTransformations, cacheEntryMap)
+            operation.result.complete(Unit)
+          }
+          is CacheOperation.Get -> {
+            val cacheValue = innerGet(operation.key, cacheEntryMap)
+            operation.result.complete(cacheValue)
+          }
+          is CacheOperation.GetOldest -> {
+            val oldest = getOldestCacheEntries(operation.sizeAtLest, cacheEntryMap)
+            operation.result.complete(oldest)
+          }
+          is CacheOperation.Remove -> {
+            innerRemove(operation.key, cacheEntryMap)
+            operation.result.complete(Unit)
+          }
+          is CacheOperation.Clear -> {
+            innerClear(cacheEntryMap)
+            operation.result.complete(Unit)
+          }
+        }
       }
     }
   }
 
-  private fun debugPrint(msg: String) {
-    if (showDebugLog) {
-      println(msg)
+  /**
+   * Public operations
+   * */
+
+  fun init() {
+    runBlocking(job) {
+      cacheOperationsActor = cacheOperationsActor()
+
+      if (cacheInfoFile.exists()) {
+        val result = CompletableDeferred<Unit>()
+        cacheOperationsActor.send(CacheOperation.ReadCacheInfoFile(result))
+        result.await()
+      } else {
+        if (!cacheInfoFile.createNewFile()) {
+          throw RuntimeException("Could not create cache info file!")
+        }
+      }
     }
   }
 
-  private fun readCacheFile() {
+  override suspend fun store(key: String, value: CacheValue) {
+    val result = CompletableDeferred<Unit>()
+    cacheOperationsActor.send(CacheOperation.Store(key, value, result))
+    result.await()
+  }
+
+  override suspend fun get(key: String): CacheValue? {
+    val result = CompletableDeferred<CacheValue?>()
+    cacheOperationsActor.send(CacheOperation.Get(key, result))
+    return result.await()
+  }
+
+  override suspend fun remove(key: String) {
+    val result = CompletableDeferred<Unit>()
+    cacheOperationsActor.send(CacheOperation.Remove(key, result))
+    result.await()
+  }
+
+  override suspend fun clear() {
+    val result = CompletableDeferred<Unit>()
+    cacheOperationsActor.send(CacheOperation.Clear(result))
+    result.await()
+  }
+
+  /**
+   * Inner operations
+   * */
+
+  private fun innerClear(cacheInfoRecordMap: HashMap<String, CacheInfoRecord>) {
+    cacheInfoRecordMap.clear()
+
+    val files = getAllCachedFilesInCacheDir()
+    for (file in files) {
+      deleteFile(file)
+    }
+
+    innerUpdateCacheInfoFile(cacheInfoRecordMap)
+  }
+
+  private fun innerRemoveMany(keyList: List<String>, cacheInfoRecordMap: HashMap<String, CacheInfoRecord>) {
+    val entriesToRemove = keyList
+      .map { cacheInfoRecordMap[it]!! }
+
+    for (entry in entriesToRemove) {
+      deleteFile(entry.cachedFile)
+      cacheInfoRecordMap.remove(entry.url)
+    }
+
+    innerUpdateCacheInfoFile(cacheInfoRecordMap)
+  }
+
+  private fun innerRemove(key: String, cacheInfoRecordMap: HashMap<String, CacheInfoRecord>) {
+    val cacheEntry = cacheInfoRecordMap[key]
+    if (cacheEntry == null) {
+      return
+    }
+
+    cacheInfoRecordMap.remove(key)
+    innerUpdateCacheInfoFile(cacheInfoRecordMap)
+
+    deleteFile(cacheEntry.cachedFile)
+  }
+
+  private fun innerGet(key: String, cacheInfoRecordMap: HashMap<String, CacheInfoRecord>): CacheValue? {
+    val cacheEntry = cacheInfoRecordMap[key]
+    if (cacheEntry == null) {
+      return null
+    }
+
+    if (!cacheEntry.cachedFile.exists()) {
+      innerRemove(key, cacheInfoRecordMap)
+      return null
+    }
+
+    return CacheValue(cacheEntry.cachedFile, cacheEntry.appliedTransformations)
+  }
+
+  private fun innerStore(
+    key: String,
+    inFile: File,
+    appliedTransformations: Array<TransformationType>,
+    cacheInfoRecordMap: HashMap<String, CacheInfoRecord>
+  ) {
+    val fileLength = inFile.length()
+    val totalCacheSize = calculateTotalCacheSize(cacheInfoRecordMap) + fileLength
+
+    if (totalCacheSize > maxDiskCacheSize) {
+      val clearAtLeast = Math.max((maxDiskCacheSize * 0.3).toLong(), fileLength)
+      val lastAddedEntries = getOldestCacheEntries(clearAtLeast, cacheInfoRecordMap)
+
+      val keyList = lastAddedEntries.map { it.url }
+      innerRemoveMany(keyList, cacheInfoRecordMap)
+    }
+
+    val newFile = createCachedImageFile(key)
+    inFile.copyTo(newFile)
+
+    cacheInfoRecordMap[key] = CacheInfoRecord(key, newFile, System.currentTimeMillis(), appliedTransformations)
+    innerUpdateCacheInfoFile(cacheInfoRecordMap)
+  }
+
+  private fun innerReadCacheFile(cacheInfoRecordMap: HashMap<String, CacheInfoRecord>) {
     val lines = cacheInfoFile.readLines()
     var hasCorruptedEntries = false
 
-    cacheEntryMap.clear()
+    cacheInfoRecordMap.clear()
+
+    if (lines.isEmpty()) {
+      return
+    }
 
     for (line in lines) {
       val split = line.split(separator)
 
-      if (split.size != 5) {
+      if (split.size != 4) {
+        debugPrint("Corrupted cache info file: split.size (${split.size}) != 5")
         hasCorruptedEntries = true
         continue
       }
 
-      val (url, fileName, fileSizeStr, addedOnStr, appliedTransformationsStr) = split
+      val (url, filePath, addedOnStr, appliedTransformationsStr) = split
 
       if (url.isEmpty()) {
+        debugPrint("Corrupted cache info file: url is empty")
         hasCorruptedEntries = true
         continue
       }
 
-      if (fileName.isEmpty()) {
+      if (filePath.isEmpty()) {
+        debugPrint("Corrupted cache info file: filePath is empty")
         hasCorruptedEntries = true
         continue
       }
 
-      val fileSize = try {
-        fileSizeStr.toLong()
-      } catch (error: NumberFormatException) {
+      val file = File(filePath)
+      if (!file.exists() || !file.isFile) {
+        debugPrint("Corrupted cache info file: file does not exist or it's not a file")
         hasCorruptedEntries = true
         continue
       }
@@ -70,6 +222,7 @@ class DiskCache(
       val addedOn = try {
         addedOnStr.toLong()
       } catch (error: NumberFormatException) {
+        debugPrint("Corrupted cache info file: addedOnStr is not a number")
         hasCorruptedEntries = true
         continue
       }
@@ -90,161 +243,36 @@ class DiskCache(
         }
       }
 
-      if (cacheEntryMap.containsKey(url)) {
+      if (cacheInfoRecordMap.containsKey(url)) {
+        debugPrint("Corrupted cache info file: cacheInfoRecordMap already contain the url ($url)")
         hasCorruptedEntries = true
         continue
       }
 
-      cacheEntryMap[url] = CacheEntry(url, fileName, fileSize, addedOn, transformations)
+      cacheInfoRecordMap[url] = CacheInfoRecord(url, file, addedOn, transformations)
     }
 
-    if (getAllCachedFilesInCacheDir().size != lines.size) {
+    val fileCount = getAllCachedFilesInCacheDir().size
+    if (fileCount != lines.size) {
+      debugPrint("Corrupted cache info file: count of files in the cache directory ($fileCount) != entries in the cache info file (${lines.size})")
       hasCorruptedEntries = true
     }
 
     if (hasCorruptedEntries) {
-      removeCorruptedEntries()
+      removeCorruptedEntries(cacheInfoRecordMap)
     }
   }
 
-  override fun store(key: String, value: CacheValue) {
-    val file = value.file
-    val fileLength = file.length()
-    val totalCacheSize = calculateTotalCacheSize() + fileLength
-
-    if (totalCacheSize > maxDiskCacheSize) {
-      debugPrint("Disk cache size exceeded ($totalCacheSize > $maxDiskCacheSize)")
-      val clearAtLeast = Math.max((maxDiskCacheSize * 0.3).toLong(), fileLength)
-
-      debugPrint("Removing images to clear at least ${clearAtLeast} bytes in cache")
-      val lastAddedEntries = getLastAddedCacheEntries(clearAtLeast)
-
-      for (entry in lastAddedEntries) {
-        debugPrint("Removing CacheEntry: $entry")
-        remove(entry.url)
-      }
-    }
-
-    cacheEntryMap[key] = CacheEntry(key, file.name, fileLength, System.currentTimeMillis(), value.appliedTransformations)
-    updateCacheInfoFile()
-  }
-
-  override fun get(key: String): CacheValue? {
-    val cacheEntry = cacheEntryMap[key]
-    if (cacheEntry != null) {
-      val fullImagePath = File(cacheDir, cacheEntry.fileName)
-
-      if (!fullImagePath.exists()) {
-        remove(key)
-        return null
-      }
-
-      return CacheValue(fullImagePath, cacheEntry.appliedTransformations)
-    }
-
-    return null
-  }
-
-  override fun remove(key: String) {
-    val cacheEntry = cacheEntryMap[key]
-    if (cacheEntry == null) {
-      return
-    }
-
-    cacheEntryMap.remove(key)
-    updateCacheInfoFile()
-
-    val path = File(cacheDir, cacheEntry.fileName).toPath()
-    Files.deleteIfExists(path)
-  }
-
-  override fun clear() {
-    cacheEntryMap.clear()
-
-    for (file in cacheDir.listFiles()) {
-      if (file.exists() && file.isFile) {
-        Files.deleteIfExists(file.toPath())
-      }
-    }
-
-    cacheDir.delete()
-  }
-
-  private fun getLastAddedCacheEntries(clearAtLeast: Long): List<CacheEntry> {
-    val sortedCacheEntries = cacheEntryMap.values
-      .sortedBy { it.addedOn }
-
-    var accumulatedSize = 0L
-    val cacheEntryList = mutableListOf<CacheEntry>()
-
-    for (entry in sortedCacheEntries) {
-      if (accumulatedSize >= clearAtLeast) {
-        break
-      }
-
-      accumulatedSize += entry.fileSize
-      cacheEntryList += entry
-    }
-
-    return cacheEntryList
-  }
-
-  private fun calculateTotalCacheSize(): Long {
-    if (cacheEntryMap.isEmpty()) {
-      return 0L
-    }
-
-    return cacheEntryMap.values
-      .map { it.fileSize }
-      .reduce { acc, len -> acc + len }
-  }
-
-  private fun removeCorruptedEntries() {
-    val filesInCacheDirectory = getAllCachedFilesInCacheDir()
-    val toDeleteCacheEntries = mutableSetOf<CacheEntry>()
-    val fileToDeletePaths = mutableListOf<Path>()
-
-    for (file in filesInCacheDirectory) {
-      val fileName = file.name
-
-      for (cacheEntry in cacheEntryMap.values) {
-        if (fileName == cacheEntry.fileName) {
-          break
-        }
-
-        toDeleteCacheEntries += cacheEntry
-      }
-    }
-
-    for (toDeleteEntry in toDeleteCacheEntries) {
-      cacheEntryMap.remove(toDeleteEntry.url)
-      fileToDeletePaths.add(File(cacheDir, toDeleteEntry.fileName).toPath())
-    }
-
-    fileToDeletePaths.forEach {
-      Files.deleteIfExists(it)
-    }
-
-    updateCacheInfoFile()
-  }
-
-  private fun getAllCachedFilesInCacheDir(): Array<File> {
-    return cacheDir
-      .listFiles { _, fileName -> fileName != cacheInfoFile.name }
-  }
-
-  private fun updateCacheInfoFile() {
+  private fun innerUpdateCacheInfoFile(cacheInfoRecordMap: HashMap<String, CacheInfoRecord>) {
     val outString = buildString(256) {
-      for ((_, value) in cacheEntryMap) {
+      for ((_, value) in cacheInfoRecordMap) {
         val appliedTransformations = value.appliedTransformations
           .map { it.type }
           .joinToString(appliedTransformSeparator)
 
         append(value.url)
         append(separator)
-        append(value.fileName)
-        append(separator)
-        append(value.fileSize)
+        append(value.cachedFile.absolutePath)
         append(separator)
         append(value.addedOn)
         append(separator)
@@ -254,5 +282,109 @@ class DiskCache(
     }
 
     cacheInfoFile.writeText(outString)
+  }
+
+  /**
+   * Private operations
+   * */
+
+  private fun debugPrint(msg: String) {
+    if (showDebugLog) {
+      println("thread: ${Thread.currentThread().name}, $msg")
+    }
+  }
+
+  private fun getOldestCacheEntries(
+    sizeAtLest: Long,
+    cacheInfoRecordMap: HashMap<String, CacheInfoRecord>
+  ): List<CacheInfoRecord> {
+    val sortedCacheEntries = cacheInfoRecordMap.values
+      .sortedBy { it.addedOn }
+
+    var accumulatedSize = 0L
+    val oldest = mutableListOf<CacheInfoRecord>()
+
+    for (entry in sortedCacheEntries) {
+      if (accumulatedSize >= sizeAtLest) {
+        break
+      }
+
+      accumulatedSize += entry.cachedFile.length()
+      oldest += entry
+    }
+
+    return oldest
+  }
+
+  private fun calculateTotalCacheSize(cacheInfoRecordMap: HashMap<String, CacheInfoRecord>): Long {
+    if (cacheInfoRecordMap.isEmpty()) {
+      return 0L
+    }
+
+    return cacheInfoRecordMap.values
+      .map { it.cachedFile.length() }
+      .reduce { acc, len -> acc + len }
+  }
+
+  private fun removeCorruptedEntries(cacheInfoRecordMap: HashMap<String, CacheInfoRecord>) {
+    val filesInCacheDirectory = getAllCachedFilesInCacheDir()
+    val filesToDelete = mutableListOf<File>()
+
+    for (file in filesInCacheDirectory) {
+      val fileName = file.name
+
+      for (cacheEntry in cacheInfoRecordMap.values) {
+        if (fileName == cacheEntry.cachedFile.name) {
+          break
+        }
+
+        cacheInfoRecordMap.remove(cacheEntry.url)
+        filesToDelete.add(cacheEntry.cachedFile)
+      }
+    }
+
+    filesToDelete.forEach {
+      deleteFile(it)
+    }
+
+    innerUpdateCacheInfoFile(cacheInfoRecordMap)
+  }
+
+  private fun getAllCachedFilesInCacheDir(): Array<File> {
+    return cacheDir
+      .listFiles { _, fileName -> fileName != cacheInfoFile.name } ?: emptyArray()
+  }
+
+  private fun deleteFile(file: File) {
+    if (!file.exists() || !file.isFile) {
+      return
+    }
+
+    val path = file.toPath()
+    Files.deleteIfExists(path)
+  }
+
+  private fun createCachedImageFile(key: String): File {
+    val fileName = "${System.nanoTime()}_${key.hashCode().toUInt()}.cached"
+    return File(cacheDir, fileName)
+  }
+
+  sealed class CacheOperation {
+    class ReadCacheInfoFile(val result: CompletableDeferred<Unit>) : CacheOperation()
+
+    class Store(val key: String,
+                val cacheValue: CacheValue,
+                val result: CompletableDeferred<Unit>) : CacheOperation()
+
+    class Get(val key: String,
+              val result: CompletableDeferred<CacheValue?>) : CacheOperation()
+
+    class Remove(val key: String,
+                 val result: CompletableDeferred<Unit>) : CacheOperation()
+
+    class GetOldest(val sizeAtLest: Long,
+                    val result: CompletableDeferred<List<CacheInfoRecord>>) : CacheOperation()
+
+    class Clear(val result: CompletableDeferred<Unit>) : CacheOperation()
   }
 }
