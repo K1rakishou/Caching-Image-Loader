@@ -11,7 +11,7 @@ Then you can download an image and render it in an `ImageView` like this:
 ```
 imageLoader.newRequest()
   .load("https://i.imgur.com/e8h3Mbc.jpg")
-  .transformers(TransformationBuilder().resize(400, 400))
+  .transformations(TransformationBuilder().resize(400, 400))
   .into(imageView)
 ```
 
@@ -31,7 +31,7 @@ Now also store it in the cache with already applied transformations so we don't 
 ```
 imageLoader.newRequest()
   .load("https://i.imgur.com/vzsgL0n.jpg")
-  .transformers(
+  .transformations(
     TransformationBuilder()
       .centerCrop(imageView)
       .circleCrop(

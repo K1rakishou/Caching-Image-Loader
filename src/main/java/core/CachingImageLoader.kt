@@ -318,7 +318,7 @@ class CachingImageLoader(
       return this
     }
 
-    fun transformers(builder: TransformationBuilder): RequestBuilder {
+    fun transformations(builder: TransformationBuilder): RequestBuilder {
       transformers.addAll(builder.getTransformers())
       return this
     }

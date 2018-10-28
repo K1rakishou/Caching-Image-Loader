@@ -50,7 +50,7 @@ internal class TestView : View() {
         action {
           imageLoader.newRequest()
             .load(getImage())
-            .transformers(
+            .transformations(
               TransformationBuilder()
                 .centerCrop(imageView)
                 .circleCrop(

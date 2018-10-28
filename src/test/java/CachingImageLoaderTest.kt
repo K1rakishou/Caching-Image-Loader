@@ -271,7 +271,7 @@ class CachingImageLoaderTest {
     runBlocking {
       val image = defaultImageLoader.newRequest()
         .load(imageUrls[0])
-        .transformers(
+        .transformations(
           TransformationBuilder()
             .centerCrop(100, 100))
         .saveStrategy(SaveStrategy.SaveOriginalImage)
@@ -294,7 +294,7 @@ class CachingImageLoaderTest {
     runBlocking {
       val image = defaultImageLoader.newRequest()
         .load(imageUrls[0])
-        .transformers(
+        .transformations(
           TransformationBuilder()
             .centerCrop(100, 100))
         .saveStrategy(SaveStrategy.SaveOriginalImage)
@@ -320,7 +320,7 @@ class CachingImageLoaderTest {
     runBlocking {
       val image = defaultImageLoader.newRequest()
         .load(imageUrls[0])
-        .transformers(
+        .transformations(
           TransformationBuilder()
             .centerCrop(100, 100))
         .saveStrategy(SaveStrategy.SaveTransformedImage)
@@ -344,7 +344,7 @@ class CachingImageLoaderTest {
     runBlocking {
       val image = defaultImageLoader.newRequest()
         .load(imageUrls[0])
-        .transformers(
+        .transformations(
           TransformationBuilder()
             .centerCrop(100, 100))
         .saveStrategy(SaveStrategy.SaveTransformedImage)
@@ -371,7 +371,7 @@ class CachingImageLoaderTest {
     runBlocking {
       val image = defaultImageLoader.newRequest()
         .load(imageUrls[0])
-        .transformers(
+        .transformations(
           TransformationBuilder()
             .centerCrop(200, 200)
             .resize(150, 150)
