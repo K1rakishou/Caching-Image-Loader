@@ -22,7 +22,7 @@ import kotlin.coroutines.CoroutineContext
 
 class CachingImageLoader(
   maxDiskCacheSize: Long = defaultDiskCacheSize,
-  cacheDir: File = File(System.getProperty("user.dir")),
+  projectDirectory: File = File(System.getProperty("user.dir")),
   private val showDebugLog: Boolean = true,
   private val client: HttpClientFacade = DefaultHttpClient(showDebugLog),
   private val dispatcher: CoroutineDispatcher = newFixedThreadPoolContext(2, "caching-image-loader")
@@ -32,15 +32,23 @@ class CachingImageLoader(
 
   private var diskCache: DiskCache
   private var imageCacheDir: File
+  private var tempFilesDir: File
 
   override val coroutineContext: CoroutineContext
     get() = job
 
   init {
-    imageCacheDir = File(cacheDir, "\\image-cache")
+    imageCacheDir = File(projectDirectory, "\\image-cache")
     if (!imageCacheDir.exists()) {
       if (!imageCacheDir.mkdirs()) {
         throw IllegalStateException("Could not create image cache directory: ${imageCacheDir.absolutePath}")
+      }
+    }
+
+    tempFilesDir = File(projectDirectory, "\\temp-files")
+    if (!tempFilesDir.exists()) {
+      if (!tempFilesDir.mkdirs()) {
+        throw IllegalStateException("Could not create image cache directory: ${tempFilesDir.absolutePath}")
       }
     }
 
@@ -81,15 +89,14 @@ class CachingImageLoader(
         val transformedBufferedImage = if (fromCache == null) {
           debugPrint("image ($url) does not exist in the cache")
 
-          val cacheValue = withContext(Dispatchers.IO) { downloadImage(url) }
-          if (cacheValue == null) {
+          val imageFile = downloadImage(url)
+          if (imageFile == null) {
             onError(loaderRequest)
             return@launch
           }
 
-          val (transformedImage, appliedTransformations) = withContext(Dispatchers.IO) {
-            applyTransformations(transformations, cacheValue)
-          }
+          val cacheValue = CacheValue(imageFile, emptyArray())
+          val (transformedImage, appliedTransformations) = applyTransformations(transformations, cacheValue)
 
           when (saveStrategy) {
             SaveStrategy.SaveOriginalImage -> diskCache.store(url, cacheValue)
@@ -219,17 +226,24 @@ class CachingImageLoader(
     return false
   }
 
-  private suspend fun downloadImage(imageUrl: String): CacheValue? {
-    val response = client.fetchImage(imageUrl).await()
-
+  private suspend fun downloadImage(imageUrl: String): File? {
     try {
+      val response = client.fetchImage(imageUrl).await()
       if (response == null) {
         debugPrint("Couldn't retrieve response")
         return null
       }
 
-      if (response.statusCode != HttpStatusCode.OK.value) {
-        debugPrint("Response status is not OK! (${response.statusCode})")
+      val contentType = response.contentType
+      val contentBuffer = response.contentBuffer
+
+      if (contentType == null) {
+        debugPrint("contentType is null")
+        return null
+      }
+
+      if (contentBuffer == null) {
+        debugPrint("content is null")
         return null
       }
 
@@ -245,23 +259,21 @@ class CachingImageLoader(
         return null
       }
 
-      val imageFile = createCachedImageFile(imageUrl)
+      return createCachedImageFile(imageUrl)
+        .apply {
+          createNewFile()
+          writeBytes(contentBuffer)
+        }
 
-      imageFile.outputStream().use {
-        response.content.copyTo(it)
-      }
-
-      return CacheValue(imageFile, emptyArray())
     } catch (error: Throwable) {
       error.printStackTrace()
       return null
     }
   }
 
-  //TODO: this should not create files in imageCacheDir
   private fun createCachedImageFile(imageUrl: String): File {
     val fileName = "${System.nanoTime()}_${imageUrl.hashCode().toUInt()}.cached"
-    return File(imageCacheDir, fileName)
+    return File(tempFilesDir, fileName)
   }
 
   private fun setImageError(imageView: WeakReference<ImageView>) {

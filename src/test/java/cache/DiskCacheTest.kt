@@ -14,8 +14,8 @@ class DiskCacheTest {
   private val cacheDir = File(System.getProperty("user.dir"), "\\image-cache")
   private val tempFilesDir = File(System.getProperty("user.dir"), "\\tmp")
   private val cacheInfoFile = File(cacheDir, "disk-cache.dat")
-  private val cache = DiskCache(128 * 1024, cacheDir, true)
-  private val smallCache = DiskCache(1, cacheDir, true)
+  private val cache = DiskCache(128 * 1024, cacheDir, false)
+  private val smallCache = DiskCache(1, cacheDir, false)
 
   private val runsCount = 64
   private val concurrency = 64

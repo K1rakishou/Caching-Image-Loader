@@ -4,10 +4,12 @@ import io.ktor.client.HttpClient
 import io.ktor.client.call.call
 import io.ktor.client.engine.cio.CIO
 import io.ktor.http.HttpHeaders
+import io.ktor.http.HttpStatusCode
+import io.ktor.http.contentLength
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.io.jvm.javaio.toInputStream
+import kotlinx.coroutines.io.readFully
 import kotlinx.coroutines.launch
 import java.util.concurrent.CompletableFuture
 
@@ -38,14 +40,30 @@ class DefaultHttpClient(
     launch(Dispatchers.IO) {
       try {
         client.call(url).response.use { response ->
-          val contentTypeString = response.headers.get(HttpHeaders.ContentType)
+          if (response.status != HttpStatusCode.OK) {
+            debugPrint("Response status is not OK! (${response.status})")
+            future.complete(null)
+            return@launch
+          }
+
+          val contentTypeString = response.headers[HttpHeaders.ContentType]
           if (contentTypeString == null) {
             debugPrint("Content-type is null!")
             future.complete(null)
             return@launch
           }
 
-          future.complete(ResponseData(response.status.value, contentTypeString, response.content.toInputStream()))
+          val len = response.contentLength()
+          if (len == null) {
+            debugPrint("Content length is null!")
+            future.complete(null)
+            return@launch
+          }
+
+          val buffer = ByteArray(len.toInt())
+          response.content.readFully(buffer)
+
+          future.complete(ResponseData(contentTypeString, buffer))
         }
       } catch (error: Throwable) {
         future.complete(null)
