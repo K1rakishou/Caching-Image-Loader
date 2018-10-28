@@ -5,7 +5,6 @@ import cache.CacheValue
 import cache.DiskCache
 import http.DefaultHttpClient
 import http.HttpClientFacade
-import io.ktor.http.HttpStatusCode
 import javafx.embed.swing.SwingFXUtils
 import javafx.scene.image.Image
 import javafx.scene.image.ImageView
@@ -60,7 +59,7 @@ class CachingImageLoader(
 
   private fun debugPrint(msg: String) {
     if (showDebugLog) {
-      println(msg)
+      println("thread: ${Thread.currentThread().name}, $msg")
     }
   }
 
