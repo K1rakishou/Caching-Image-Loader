@@ -1,6 +1,6 @@
 package core
 
-import builders.TransformerBuilder
+import builders.TransformationBuilder
 import cache.CacheValue
 import cache.DiskCache
 import http.DefaultHttpClient
@@ -16,6 +16,7 @@ import java.awt.image.BufferedImage
 import java.io.File
 import java.lang.ref.WeakReference
 import java.nio.file.Files
+import java.util.concurrent.CompletableFuture
 import javax.imageio.ImageIO
 import kotlin.coroutines.CoroutineContext
 
@@ -317,7 +318,7 @@ class CachingImageLoader(
       return this
     }
 
-    fun transformers(builder: TransformerBuilder): RequestBuilder {
+    fun transformers(builder: TransformationBuilder): RequestBuilder {
       transformers.addAll(builder.getTransformers())
       return this
     }
@@ -327,8 +328,8 @@ class CachingImageLoader(
       return this
     }
 
-    fun getAsync(): CompletableDeferred<Image?> {
-      val future = CompletableDeferred<Image?>()
+    fun getAsync(): CompletableFuture<Image?> {
+      val future = CompletableFuture<Image?>()
       runRequest(LoaderRequest.DownloadAsyncRequest(future), saveStrategy, url, transformers)
       return future
     }

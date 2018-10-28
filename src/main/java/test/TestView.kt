@@ -1,7 +1,7 @@
 package test
 
 import builders.CircleCropParametersBuilder
-import builders.TransformerBuilder
+import builders.TransformationBuilder
 import core.CachingImageLoader
 import core.SaveStrategy
 import javafx.scene.image.ImageView
@@ -19,6 +19,8 @@ internal class TestView : View() {
   private val imageLoader = CachingImageLoader()
   private val counter = AtomicInteger(0)
   private val images = listOf(
+    "https://i.imgur.com/vzsgL0n.jpg",
+    "https://i.imgur.com/e8h3Mbc.jpg",
     "https://i.imgur.com/cc2M7sK.png",
     "https://i.imgur.com/aCedFRM.jpg",
     "https://i.imgur.com/858QmKq.jpg",
@@ -49,7 +51,7 @@ internal class TestView : View() {
           imageLoader.newRequest()
             .load(getImage())
             .transformers(
-              TransformerBuilder()
+              TransformationBuilder()
                 .centerCrop(imageView)
                 .circleCrop(
                   CircleCropParametersBuilder()
@@ -66,7 +68,6 @@ internal class TestView : View() {
       fitWidth = 600.0
       fitHeight = 600.0
     }
-
   }
 
 }

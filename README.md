@@ -10,7 +10,8 @@ Then you can download an image and render it in an `ImageView` like this:
 
 ```
 imageLoader.newRequest()
-  .load("image_url.com/123.png")
+  .load("https://i.imgur.com/e8h3Mbc.jpg")
+  .transformers(TransformationBuilder().resize(400, 400))
   .into(imageView)
 ```
 
@@ -27,10 +28,10 @@ Now also store it in the cache with already applied transformations so we don't 
 
 ```
 imageLoader.newRequest()
-  .load("image_url.com/123.png")
+  .load("https://i.imgur.com/vzsgL0n.jpg")
   .transformers(
-    TransformerBuilder()
-      .fitCenter(imageView)
+    TransformationBuilder()
+      .centerCrop(imageView)
       .circleCrop(
         CircleCropParametersBuilder()
           .backgroundColor(Color.RED)
@@ -41,10 +42,10 @@ imageLoader.newRequest()
   .into(imageView)
 ```
 
-There is also an option to retrieve a CompletableDeferred holding the Image object with help of the `getAsync` method:
+There is also an option to just retrieve a CompletableFuture holding the Image object without loading it into an ImageView:
 
 ```
-imageLoader.newRequest()
-  .load(getImage())
+val future: CompletableFuture<Image?> = imageLoader.newRequest()
+  .load("https://i.imgur.com/vzsgL0n.jpg")
   .getAsync()
 ```

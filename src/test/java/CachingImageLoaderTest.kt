@@ -1,19 +1,18 @@
-import builders.TransformerBuilder
+import builders.TransformationBuilder
 import cache.CacheInfoRecord
 import core.CachingImageLoader
 import core.SaveStrategy
 import http.HttpClientFacade
 import http.ResponseData
 import kotlinx.coroutines.*
+import kotlinx.coroutines.future.await
 import org.junit.After
 import org.junit.Before
 import org.junit.Test
 import org.mockito.Mockito
 import transformations.TransformationType
 import java.io.File
-import java.lang.RuntimeException
 import java.util.concurrent.CompletableFuture
-import kotlin.system.measureTimeMillis
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
@@ -273,7 +272,7 @@ class CachingImageLoaderTest {
       val image = defaultImageLoader.newRequest()
         .load(imageUrls[0])
         .transformers(
-          TransformerBuilder()
+          TransformationBuilder()
             .centerCrop(100, 100))
         .saveStrategy(SaveStrategy.SaveOriginalImage)
         .getAsync()
@@ -296,7 +295,7 @@ class CachingImageLoaderTest {
       val image = defaultImageLoader.newRequest()
         .load(imageUrls[0])
         .transformers(
-          TransformerBuilder()
+          TransformationBuilder()
             .centerCrop(100, 100))
         .saveStrategy(SaveStrategy.SaveOriginalImage)
         .getAsync()
@@ -322,7 +321,7 @@ class CachingImageLoaderTest {
       val image = defaultImageLoader.newRequest()
         .load(imageUrls[0])
         .transformers(
-          TransformerBuilder()
+          TransformationBuilder()
             .centerCrop(100, 100))
         .saveStrategy(SaveStrategy.SaveTransformedImage)
         .getAsync()
@@ -346,7 +345,7 @@ class CachingImageLoaderTest {
       val image = defaultImageLoader.newRequest()
         .load(imageUrls[0])
         .transformers(
-          TransformerBuilder()
+          TransformationBuilder()
             .centerCrop(100, 100))
         .saveStrategy(SaveStrategy.SaveTransformedImage)
         .getAsync()
@@ -373,7 +372,7 @@ class CachingImageLoaderTest {
       val image = defaultImageLoader.newRequest()
         .load(imageUrls[0])
         .transformers(
-          TransformerBuilder()
+          TransformationBuilder()
             .centerCrop(200, 200)
             .resize(150, 150)
         )
