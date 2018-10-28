@@ -15,6 +15,7 @@ import transformations.TransformationType
 import java.awt.image.BufferedImage
 import java.io.File
 import java.lang.ref.WeakReference
+import java.nio.file.Files
 import javax.imageio.ImageIO
 import kotlin.coroutines.CoroutineContext
 
@@ -89,28 +90,24 @@ class CachingImageLoader(
           debugPrint("image ($url) does not exist in the cache")
 
           val imageFile = downloadImage(url)
-          if (imageFile == null) {
-            activeRequests.remove(url)
-            onError(loaderRequest)
-            return@launch
-          }
 
-          val cacheValue = CacheValue(imageFile, emptyArray())
-          val (transformedImage, appliedTransformations) = applyTransformations(transformations, cacheValue)
+          try {
+            if (imageFile == null) {
+              activeRequests.remove(url)
+              onError(loaderRequest)
+              return@launch
+            }
 
-          when (saveStrategy) {
-            SaveStrategy.SaveOriginalImage -> diskCache.store(url, cacheValue)
-            SaveStrategy.SaveTransformedImage -> {
-              val result = ImageIO.write(transformedImage, ImageType.Png.value, cacheValue.file)
-              if (!result) {
-                throw RuntimeException("Could not save image to disk!")
-              }
+            val cacheValue = CacheValue(imageFile, emptyArray())
+            val (transformedImage, appliedTransformations) = applyTransformations(transformations, cacheValue)
+            storeImage(saveStrategy, url, cacheValue, transformedImage, appliedTransformations)
 
-              diskCache.store(url, CacheValue(cacheValue.file, appliedTransformations.toTypedArray()))
+            transformedImage
+          } finally {
+            imageFile?.let { imgFile ->
+              Files.deleteIfExists(imgFile.toPath())
             }
           }
-
-          transformedImage
         } else {
           debugPrint("image ($url) already exists in the cache")
 
@@ -127,6 +124,26 @@ class CachingImageLoader(
 
         activeRequests.remove(url)
         onError(loaderRequest)
+      }
+    }
+  }
+
+  private suspend fun storeImage(
+    saveStrategy: SaveStrategy,
+    url: String,
+    cacheValue: CacheValue,
+    transformedImage: BufferedImage,
+    appliedTransformations: List<TransformationType>
+  ) {
+    when (saveStrategy) {
+      SaveStrategy.SaveOriginalImage -> diskCache.store(url, cacheValue)
+      SaveStrategy.SaveTransformedImage -> {
+        val result = ImageIO.write(transformedImage, ImageType.Png.value, cacheValue.file)
+        if (!result) {
+          throw RuntimeException("Could not save image to disk!")
+        }
+
+        diskCache.store(url, CacheValue(cacheValue.file, appliedTransformations.toTypedArray()))
       }
     }
   }
