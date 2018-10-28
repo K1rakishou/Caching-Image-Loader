@@ -83,6 +83,10 @@ class CachingImageLoaderTest {
       defaultImageLoader.clearCache()
     }
 
+    if (::imageLoaderWithSmallCache.isInitialized) {
+      imageLoaderWithSmallCache.clearCache()
+    }
+
     val fakeHttpClient = Mockito.mock(HttpClientFacade::class.java)
 
     Mockito.doAnswer { invocationOnMock ->

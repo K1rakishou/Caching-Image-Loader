@@ -23,9 +23,9 @@ import kotlin.coroutines.CoroutineContext
 
 class CachingImageLoader(
   maxDiskCacheSize: Long = defaultDiskCacheSize,
-  projectDirectory: File = File(System.getProperty("user.dir")),
+  rootDirectory: File = File(System.getProperty("user.dir")),
   private val showDebugLog: Boolean = true,
-  private val client: HttpClientFacade = DefaultHttpClient(projectDirectory, showDebugLog),
+  private val client: HttpClientFacade = DefaultHttpClient(rootDirectory, showDebugLog),
   private val dispatcher: CoroutineDispatcher = newFixedThreadPoolContext(2, "caching-image-loader")
 ) : CoroutineScope {
   private val activeRequests = mutableSetOf<String>()
@@ -38,7 +38,7 @@ class CachingImageLoader(
     get() = job
 
   init {
-    imageCacheDir = File(projectDirectory, "\\image-cache")
+    imageCacheDir = File(rootDirectory, "\\image-cache")
     if (!imageCacheDir.exists()) {
       if (!imageCacheDir.mkdirs()) {
         throw IllegalStateException("Could not create image cache directory: ${imageCacheDir.absolutePath}")
