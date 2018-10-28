@@ -26,13 +26,13 @@ class CachingImageLoaderTest {
   private val cacheInfoFile = File(cacheDir, "disk-cache.dat")
 
   private val imageUrls = listOf(
-    "https://i.imgur.com/1.jpg",
+    "https://i.imgur.com/1.png",
     "https://i.imgur.com/2.jpg",
     "https://i.imgur.com/3.jpg",
     "https://i.imgur.com/4.jpg",
-    "https://i.imgur.com/5.png",
-    "https://i.imgur.com/6.jpg",
-    "https://i.imgur.com/7.png"
+    "https://i.imgur.com/5.jpg",
+    "https://i.imgur.com/6.png",
+    "https://i.imgur.com/7.jpg"
   )
 
   private fun listFiles(): Array<File> {
@@ -88,7 +88,8 @@ class CachingImageLoaderTest {
     Mockito.doAnswer { invocationOnMock ->
       val url = invocationOnMock.getArgument(0) as String
       val fileName = url.substring(20)
-      val file = File(System.getProperty("user.dir"), "\\src\\test\\resources\\$fileName")
+      val resourcesDir = File(System.getProperty("user.dir"), "\\src\\test\\resources")
+      val file = File(resourcesDir, "\\$fileName")
       val future = CompletableFuture<ResponseData?>()
 
       val contentType = when {
@@ -101,7 +102,10 @@ class CachingImageLoaderTest {
         }
       }
 
-      future.complete(ResponseData(contentType, file.readBytes()))
+      val testFile = File(resourcesDir, "\\$fileName$fileName")
+      file.copyTo(testFile)
+
+      future.complete(ResponseData(contentType, testFile))
       return@doAnswer future
 
     }.`when`(fakeHttpClient).fetchImage(Mockito.anyString())

@@ -25,7 +25,7 @@ class CachingImageLoader(
   maxDiskCacheSize: Long = defaultDiskCacheSize,
   projectDirectory: File = File(System.getProperty("user.dir")),
   private val showDebugLog: Boolean = true,
-  private val client: HttpClientFacade = DefaultHttpClient(showDebugLog),
+  private val client: HttpClientFacade = DefaultHttpClient(projectDirectory, showDebugLog),
   private val dispatcher: CoroutineDispatcher = newFixedThreadPoolContext(2, "caching-image-loader")
 ) : CoroutineScope {
   private val activeRequests = mutableSetOf<String>()
@@ -33,7 +33,6 @@ class CachingImageLoader(
 
   private var diskCache: DiskCache
   private var imageCacheDir: File
-  private var tempFilesDir: File
 
   override val coroutineContext: CoroutineContext
     get() = job
@@ -43,13 +42,6 @@ class CachingImageLoader(
     if (!imageCacheDir.exists()) {
       if (!imageCacheDir.mkdirs()) {
         throw IllegalStateException("Could not create image cache directory: ${imageCacheDir.absolutePath}")
-      }
-    }
-
-    tempFilesDir = File(projectDirectory, "\\temp-files")
-    if (!tempFilesDir.exists()) {
-      if (!tempFilesDir.mkdirs()) {
-        throw IllegalStateException("Could not create image cache directory: ${tempFilesDir.absolutePath}")
       }
     }
 
@@ -192,8 +184,7 @@ class CachingImageLoader(
     transformations: MutableList<ImageTransformation>,
     cacheValue: CacheValue
   ): Pair<BufferedImage, List<TransformationType>> {
-    val image = cacheValue.file.inputStream().use { Image(it) }
-    val bufferedImage = SwingFXUtils.fromFXImage(image, null)
+    val bufferedImage = ImageIO.read(cacheValue.file)
 
     var outImage: BufferedImage? = null
     val appliedTransformations = mutableListOf<TransformationType>()
@@ -255,14 +246,14 @@ class CachingImageLoader(
       }
 
       val contentType = response.contentType
-      val contentBuffer = response.contentBuffer
+      val contentFile = response.contentFile
 
       if (contentType == null) {
         debugPrint("contentType is null")
         return null
       }
 
-      if (contentBuffer == null) {
+      if (contentFile == null) {
         debugPrint("content is null")
         return null
       }
@@ -279,21 +270,11 @@ class CachingImageLoader(
         return null
       }
 
-      return createCachedImageFile(imageUrl)
-        .apply {
-          createNewFile()
-          writeBytes(contentBuffer)
-        }
-
+      return contentFile
     } catch (error: Throwable) {
       error.printStackTrace()
       return null
     }
-  }
-
-  private fun createCachedImageFile(imageUrl: String): File {
-    val fileName = "${System.nanoTime()}_${imageUrl.hashCode().toUInt()}.cached"
-    return File(tempFilesDir, fileName)
   }
 
   private fun setImageError(imageView: WeakReference<ImageView>) {

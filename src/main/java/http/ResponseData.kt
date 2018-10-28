@@ -1,6 +1,8 @@
 package http
 
+import java.io.File
+
 class ResponseData(
   val contentType: String?,
-  val contentBuffer: ByteArray?
+  val contentFile: File?
 )

@@ -19,8 +19,6 @@ internal class TestView : View() {
   private val imageLoader = CachingImageLoader()
   private val counter = AtomicInteger(0)
   private val images = listOf(
-    "https://i.imgur.com/vzsgL0n.jpg",
-    "https://i.imgur.com/e8h3Mbc.jpg",
     "https://i.imgur.com/cc2M7sK.png",
     "https://i.imgur.com/aCedFRM.jpg",
     "https://i.imgur.com/858QmKq.jpg",

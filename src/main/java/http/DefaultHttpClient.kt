@@ -3,20 +3,24 @@ package http
 import io.ktor.client.HttpClient
 import io.ktor.client.call.call
 import io.ktor.client.engine.cio.CIO
+import io.ktor.client.response.HttpResponse
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentLength
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
+import kotlinx.coroutines.*
 import kotlinx.coroutines.io.readFully
-import kotlinx.coroutines.launch
+import java.io.File
 import java.util.concurrent.CompletableFuture
 
 class DefaultHttpClient(
-  private val showDebugLog: Boolean
+  private val projectDirectory: File,
+  private val showDebugLog: Boolean,
+  private val dispatcher: CoroutineDispatcher = newFixedThreadPoolContext(2, "downloader")
 ) : HttpClientFacade, CoroutineScope {
   private val job = Job()
+  private val chunkSize = 4096L
+  private val tempFilesDir = File(projectDirectory, "\\temp-files")
+
   override val coroutineContext = job
 
   private val client = HttpClient(CIO) {
@@ -29,6 +33,14 @@ class DefaultHttpClient(
     }
   }
 
+  init {
+    if (!tempFilesDir.exists()) {
+      if (!tempFilesDir.mkdirs()) {
+        throw IllegalStateException("Could not create temp files directory: ${tempFilesDir.absolutePath}")
+      }
+    }
+  }
+
   override fun close() {
     job.cancel()
     client.close()
@@ -37,7 +49,7 @@ class DefaultHttpClient(
   override fun fetchImage(url: String): CompletableFuture<ResponseData?> {
     val future = CompletableFuture<ResponseData?>()
 
-    launch(Dispatchers.IO) {
+    launch(dispatcher) {
       try {
         client.call(url).response.use { response ->
           if (response.status != HttpStatusCode.OK) {
@@ -53,24 +65,51 @@ class DefaultHttpClient(
             return@launch
           }
 
-          val len = response.contentLength()
-          if (len == null) {
+          val contentLength = response.contentLength()
+          if (contentLength == null) {
             debugPrint("Content length is null!")
             future.complete(null)
             return@launch
           }
 
-          val buffer = ByteArray(len.toInt())
-          response.content.readFully(buffer)
+          val contentFile = createTempFile(url)
+          writeResponseToFile(contentFile, contentLength, response)
 
-          future.complete(ResponseData(contentTypeString, buffer))
+          future.complete(ResponseData(contentTypeString, contentFile))
         }
       } catch (error: Throwable) {
+        error.printStackTrace()
         future.complete(null)
       }
     }
 
     return future
+  }
+
+  private fun createTempFile(imageUrl: String): File {
+    val fileName = "${System.nanoTime()}_${imageUrl.hashCode().toUInt()}.cached"
+    return File(tempFilesDir, fileName)
+  }
+
+  private suspend fun writeResponseToFile(
+    contentFile: File,
+    contentLength: Long,
+    response: HttpResponse
+  ) {
+    contentFile.outputStream().use { stream ->
+      for (offset in 0 until contentLength step chunkSize) {
+        val chunk = if (contentLength - offset > chunkSize) {
+          chunkSize
+        } else {
+          contentLength - offset
+        }
+
+        val array = ByteArray(chunk.toInt())
+        response.content.readFully(array)
+
+        stream.write(array)
+      }
+    }
   }
 
   private fun debugPrint(msg: String) {
