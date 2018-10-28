@@ -91,6 +91,7 @@ class CachingImageLoader(
 
           val imageFile = downloadImage(url)
           if (imageFile == null) {
+            activeRequests.remove(url)
             onError(loaderRequest)
             return@launch
           }
@@ -119,12 +120,14 @@ class CachingImageLoader(
         }
 
         val image = SwingFXUtils.toFXImage(transformedBufferedImage, null)
+
+        activeRequests.remove(url)
         onSuccess(loaderRequest, image)
       } catch (error: Throwable) {
         error.printStackTrace()
-        onError(loaderRequest)
-      } finally {
+
         activeRequests.remove(url)
+        onError(loaderRequest)
       }
     }
   }

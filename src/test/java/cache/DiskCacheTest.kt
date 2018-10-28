@@ -17,8 +17,8 @@ class DiskCacheTest {
   private val cache = DiskCache(128 * 1024, cacheDir, false)
   private val smallCache = DiskCache(1, cacheDir, false)
 
-  private val runsCount = 64
-  private val concurrency = 64
+  private val runsCount = 16
+  private val concurrency = 128
 
   private fun deleteFile(file: File) {
     if (!file.exists() || !file.isFile) {

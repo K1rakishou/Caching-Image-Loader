@@ -132,93 +132,97 @@ class CachingImageLoaderTest {
 
   @Test
   fun `test download image`() {
-    runBlocking {
-      val url = imageUrls[0]
-      val image = defaultImageLoader.newRequest()
-        .load(url)
-        .getAsync()
-        .await()
+    repeat(10) {
+      runBlocking {
+        val url = imageUrls[0]
+        val image = defaultImageLoader.newRequest()
+          .load(url)
+          .getAsync()
+          .await()
 
-      assertNotNull(image)
-      assertEquals(1, listFiles().size)
+        assertNotNull(image)
+        assertEquals(1, listFiles().size)
 
-      val cacheEntries = readCacheInfoFile()
-      assertEquals(1, cacheEntries.size)
+        val cacheEntries = readCacheInfoFile()
+        assertEquals(1, cacheEntries.size)
 
-      for (cacheEntry in cacheEntries) {
-        assertEquals(url, cacheEntry.url)
+        for (cacheEntry in cacheEntries) {
+          assertEquals(url, cacheEntry.url)
+        }
       }
     }
   }
 
   @Test
   fun `test download image once and then get it from cache`() {
-    runBlocking {
-      val url = imageUrls[0]
+    repeat(10) {
+      runBlocking {
+        val url = imageUrls[0]
 
-      val image1 = defaultImageLoader.newRequest()
-        .load(url)
-        .getAsync()
-        .await()
-      assertNotNull(image1)
+        val image1 = defaultImageLoader.newRequest()
+          .load(url)
+          .getAsync()
+          .await()
+        assertNotNull(image1)
 
-      val image2 = defaultImageLoader.newRequest()
-        .load(url)
-        .getAsync()
-        .await()
-      assertNotNull(image2)
+        val image2 = defaultImageLoader.newRequest()
+          .load(url)
+          .getAsync()
+          .await()
+        assertNotNull(image2)
 
-      assertEquals(1, listFiles().size)
+        assertEquals(1, listFiles().size)
 
-      val cacheEntries = readCacheInfoFile()
-      assertEquals(1, cacheEntries.size)
+        val cacheEntries = readCacheInfoFile()
+        assertEquals(1, cacheEntries.size)
 
-      for (cacheEntry in cacheEntries) {
-        assertEquals(url, cacheEntry.url)
+        for (cacheEntry in cacheEntries) {
+          assertEquals(url, cacheEntry.url)
+        }
       }
     }
   }
 
   @Test
   fun `should not make a network request to get an image if there is already one in progress`() {
-    runBlocking {
-      val images = listOf(imageUrls[0], imageUrls[0], imageUrls[0], imageUrls[0])
-        .map {
-          defaultImageLoader.newRequest()
-            .load(it)
-            .getAsync()
-        }
-        .map { it.await() }
+    repeat(10) {
+      runBlocking {
+        val images = listOf(imageUrls[0], imageUrls[0], imageUrls[0], imageUrls[0])
+          .map {
+            defaultImageLoader.newRequest()
+              .load(it)
+              .getAsync()
+          }
+          .map { it.await() }
 
-      assertEquals(1, images.count { it != null })
-      assertEquals(3, images.count { it == null })
+        assertEquals(1, images.count { it != null })
+        assertEquals(3, images.count { it == null })
+      }
     }
   }
 
   @Test
   fun `test download images with not enough space in the cache`() {
-    runBlocking {
-      val images = imageUrls
-        .map {
-          imageLoaderWithSmallCache.newRequest()
-            .load(it)
-            .getAsync()
-        }
-        .map { it.await() }
+    repeat(5) {
+      runBlocking {
+        val images = imageUrls
+          .map {
+            imageLoaderWithSmallCache.newRequest()
+              .load(it)
+              .getAsync()
+          }
+          .map { it.await() }
 
-      delay(1000)
+        assertEquals(7, images.size)
+        assertEquals(false, images.any { it == null })
 
-      assertEquals(7, images.size)
-      assertEquals(false, images.any { it == null })
+        val files = listFiles()
 
-      val files = listFiles()
+        assertEquals(1, files.size)
+        val cacheEntries = readCacheInfoFile()
 
-      files.forEach { println("filename = ${it.name}") }
-
-      assertEquals(1, files.size)
-      val cacheEntries = readCacheInfoFile()
-
-      assertEquals(1, cacheEntries.size)
+        assertEquals(1, cacheEntries.size)
+      }
     }
   }
 
@@ -238,101 +242,105 @@ class CachingImageLoaderTest {
 
   @Test
   fun `test download image, apply transformations and save original image`() {
-    runBlocking {
-      val image = defaultImageLoader.newRequest()
-        .load(imageUrls[0])
-        .transformers(
-          TransformerBuilder()
-            .centerCrop(100, 100))
-        .saveStrategy(SaveStrategy.SaveOriginalImage)
-        .getAsync()
-        .await()
+    repeat(5) {
+      runBlocking {
+        val image = defaultImageLoader.newRequest()
+          .load(imageUrls[0])
+          .transformers(
+            TransformerBuilder()
+              .centerCrop(100, 100))
+          .saveStrategy(SaveStrategy.SaveOriginalImage)
+          .getAsync()
+          .await()
 
-      assertNotNull(image)
-      assertEquals(100, image.width.toInt())
-      assertEquals(100, image.height.toInt())
+        assertNotNull(image)
+        assertEquals(100, image.width.toInt())
+        assertEquals(100, image.height.toInt())
 
-      assertEquals(1, listFiles().size)
+        assertEquals(1, listFiles().size)
 
-      val cacheEntries = readCacheInfoFile()
-      assertEquals(1, cacheEntries.size)
+        val cacheEntries = readCacheInfoFile()
+        assertEquals(1, cacheEntries.size)
 
-      val cacheEntry = cacheEntries[0]
-      assertTrue(cacheEntry.appliedTransformations.isEmpty())
-    }
+        val cacheEntry = cacheEntries[0]
+        assertTrue(cacheEntry.appliedTransformations.isEmpty())
+      }
 
-    runBlocking {
-      val image = defaultImageLoader.newRequest()
-        .load(imageUrls[0])
-        .transformers(
-          TransformerBuilder()
-            .centerCrop(100, 100))
-        .saveStrategy(SaveStrategy.SaveOriginalImage)
-        .getAsync()
-        .await()
+      runBlocking {
+        val image = defaultImageLoader.newRequest()
+          .load(imageUrls[0])
+          .transformers(
+            TransformerBuilder()
+              .centerCrop(100, 100))
+          .saveStrategy(SaveStrategy.SaveOriginalImage)
+          .getAsync()
+          .await()
 
-      assertNotNull(image)
-      assertEquals(100, image.width.toInt())
-      assertEquals(100, image.height.toInt())
+        assertNotNull(image)
+        assertEquals(100, image.width.toInt())
+        assertEquals(100, image.height.toInt())
 
-      assertEquals(1, listFiles().size)
+        assertEquals(1, listFiles().size)
 
-      val cacheEntries = readCacheInfoFile()
-      assertEquals(1, cacheEntries.size)
+        val cacheEntries = readCacheInfoFile()
+        assertEquals(1, cacheEntries.size)
 
-      val cacheEntry = cacheEntries[0]
-      assertTrue(cacheEntry.appliedTransformations.isEmpty())
+        val cacheEntry = cacheEntries[0]
+        assertTrue(cacheEntry.appliedTransformations.isEmpty())
+      }
     }
   }
 
   @Test
   fun `test download image, apply transformations and save transformed image`() {
-    runBlocking {
-      val image = defaultImageLoader.newRequest()
-        .load(imageUrls[0])
-        .transformers(
-          TransformerBuilder()
-            .centerCrop(100, 100))
-        .saveStrategy(SaveStrategy.SaveTransformedImage)
-        .getAsync()
-        .await()
+    repeat(5) {
+      runBlocking {
+        val image = defaultImageLoader.newRequest()
+          .load(imageUrls[0])
+          .transformers(
+            TransformerBuilder()
+              .centerCrop(100, 100))
+          .saveStrategy(SaveStrategy.SaveTransformedImage)
+          .getAsync()
+          .await()
 
-      assertNotNull(image)
-      assertEquals(100, image.width.toInt())
-      assertEquals(100, image.height.toInt())
+        assertNotNull(image)
+        assertEquals(100, image.width.toInt())
+        assertEquals(100, image.height.toInt())
 
-      assertEquals(1, listFiles().size)
+        assertEquals(1, listFiles().size)
 
-      val cacheEntries = readCacheInfoFile()
-      assertEquals(1, cacheEntries.size)
+        val cacheEntries = readCacheInfoFile()
+        assertEquals(1, cacheEntries.size)
 
-      val cacheEntry = cacheEntries[0]
-      assertEquals(1, cacheEntry.appliedTransformations.size)
-      assertEquals(TransformationType.CenterCrop, cacheEntry.appliedTransformations[0])
-    }
+        val cacheEntry = cacheEntries[0]
+        assertEquals(1, cacheEntry.appliedTransformations.size)
+        assertEquals(TransformationType.CenterCrop, cacheEntry.appliedTransformations[0])
+      }
 
-    runBlocking {
-      val image = defaultImageLoader.newRequest()
-        .load(imageUrls[0])
-        .transformers(
-          TransformerBuilder()
-            .centerCrop(100, 100))
-        .saveStrategy(SaveStrategy.SaveTransformedImage)
-        .getAsync()
-        .await()
+      runBlocking {
+        val image = defaultImageLoader.newRequest()
+          .load(imageUrls[0])
+          .transformers(
+            TransformerBuilder()
+              .centerCrop(100, 100))
+          .saveStrategy(SaveStrategy.SaveTransformedImage)
+          .getAsync()
+          .await()
 
-      assertNotNull(image)
-      assertEquals(100, image.width.toInt())
-      assertEquals(100, image.height.toInt())
+        assertNotNull(image)
+        assertEquals(100, image.width.toInt())
+        assertEquals(100, image.height.toInt())
 
-      assertEquals(1, listFiles().size)
+        assertEquals(1, listFiles().size)
 
-      val cacheEntries = readCacheInfoFile()
-      assertEquals(1, cacheEntries.size)
+        val cacheEntries = readCacheInfoFile()
+        assertEquals(1, cacheEntries.size)
 
-      val cacheEntry = cacheEntries[0]
-      assertEquals(1, cacheEntry.appliedTransformations.size)
-      assertEquals(TransformationType.CenterCrop, cacheEntry.appliedTransformations[0])
+        val cacheEntry = cacheEntries[0]
+        assertEquals(1, cacheEntry.appliedTransformations.size)
+        assertEquals(TransformationType.CenterCrop, cacheEntry.appliedTransformations[0])
+      }
     }
   }
 
