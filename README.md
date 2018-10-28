@@ -43,7 +43,7 @@ imageLoader.newRequest()
   .saveStrategy(SaveStrategy.SaveTransformedImage)
   .into(imageView)
 ```
-![Result](https://github.com/K1rakishou/Caching-Image-Loader/blob/master/art/circle_crop_result.jpg)
+![Result](https://github.com/K1rakishou/Caching-Image-Loader/blob/master/art/circle_crop_result.png)
 
 There is also an option to just retrieve a CompletableFuture holding the Image object without loading it into an ImageView:
 

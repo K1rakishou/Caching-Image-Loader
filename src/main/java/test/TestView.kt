@@ -51,10 +51,11 @@ internal class TestView : View() {
             .transformations(
               TransformationBuilder()
                 .centerCrop(imageView)
+                .resize(400, 400)
                 .circleCrop(
                   CircleCropParametersBuilder()
-                    .backgroundColor(Color.RED)
-                    .stroke(10f, Color.GREEN)
+                    .backgroundColor(Color(0f, 0f, 0f, 0f))
+                    .stroke(10f, Color.LIGHT_GRAY)
                 )
             )
             .saveStrategy(SaveStrategy.SaveTransformedImage)

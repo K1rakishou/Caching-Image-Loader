@@ -2,6 +2,7 @@ package transformations
 
 import transformations.parameters.CircleCropParams
 import java.awt.BasicStroke
+import java.awt.RenderingHints
 import java.awt.geom.Arc2D
 import java.awt.image.BufferedImage
 
@@ -23,6 +24,7 @@ class CircleCropTransformation(
     val graphics = circleBuffer.createGraphics()
 
     try {
+      graphics.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
       graphics.paint = parameters.backgroundColor
       graphics.fillRect(0, 0, size, size)
 
