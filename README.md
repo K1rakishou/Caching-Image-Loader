@@ -15,6 +15,8 @@ imageLoader.newRequest()
   .into(imageView)
 ```
 
+![Result](https://github.com/K1rakishou/Caching-Image-Loader/blob/master/art/default_result.jpg)
+
 This will also store downloaded image onto the disk. 
 By default it will create a subdirectory named `image-cache` in the folder where the binary file is located:
 `File(System.getProperty("user.dir"), "\\image-cache"`)
@@ -41,6 +43,7 @@ imageLoader.newRequest()
   .saveStrategy(SaveStrategy.SaveTransformedImage)
   .into(imageView)
 ```
+![Result](https://github.com/K1rakishou/Caching-Image-Loader/blob/master/art/circle_crop_result.jpg)
 
 There is also an option to just retrieve a CompletableFuture holding the Image object without loading it into an ImageView:
 
