@@ -11,8 +11,7 @@ import java.nio.file.Files
 class DiskCache(
   private val maxDiskCacheSize: Long,
   private val cacheDir: File,
-  private val showDebugLog: Boolean,
-  private val dispatcher: CoroutineDispatcher = newFixedThreadPoolContext(1, "disk-cache")
+  private val showDebugLog: Boolean
 ) : Cache<String, CacheValue>, CoroutineScope {
   private val separator = ";"
   private val appliedTransformSeparator = ","
@@ -26,7 +25,7 @@ class DiskCache(
   private fun cacheOperationsActor(): SendChannel<CacheOperation> {
     val cacheEntryMap = hashMapOf<String, CacheInfoRecord>()
 
-    return actor() {
+    return actor {
       consumeEach { operation ->
         when (operation) {
           is CacheOperation.ReadCacheInfoFile -> {
@@ -67,15 +66,19 @@ class DiskCache(
       cacheOperationsActor = cacheOperationsActor()
 
       if (cacheInfoFile.exists()) {
-        val result = CompletableDeferred<Unit>()
-        cacheOperationsActor.send(CacheOperation.ReadCacheInfoFile(result))
-        result.await()
+        readCacheInfoFile()
       } else {
         if (!cacheInfoFile.createNewFile()) {
           throw RuntimeException("Could not create cache info file!")
         }
       }
     }
+  }
+
+  private suspend fun readCacheInfoFile() {
+    val result = CompletableDeferred<Unit>()
+    cacheOperationsActor.send(CacheOperation.ReadCacheInfoFile(result))
+    result.await()
   }
 
   override suspend fun store(key: String, value: CacheValue) {
