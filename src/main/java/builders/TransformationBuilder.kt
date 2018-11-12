@@ -55,4 +55,8 @@ class TransformationBuilder {
     transformations.add(ResizeTransformation(newWidth, newHeight) as ImageTransformation)
     return this
   }
+
+  fun noTransformations(): TransformationBuilder {
+    return this
+  }
 }

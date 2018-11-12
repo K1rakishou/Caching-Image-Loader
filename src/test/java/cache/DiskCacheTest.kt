@@ -47,7 +47,7 @@ class DiskCacheTest {
       assertTrue(file.exists())
       assertTrue(file.isFile)
 
-      val addedOn = addedOnStr.toLong()
+      val lastAccessTime = addedOnStr.toLong()
 
       val appliedTransformations = appliedTransformationsStr
         .removePrefix("(")
@@ -65,7 +65,7 @@ class DiskCacheTest {
         }
       }
 
-      cacheEntries += CacheInfoRecord(url, file, addedOn, transformations)
+      cacheEntries += CacheInfoRecord(url, file, lastAccessTime, transformations)
     }
 
     return cacheEntries
@@ -158,6 +158,43 @@ class DiskCacheTest {
 
       val cacheInfoFile = readCacheInfoFile()
       assertEquals(1, cacheInfoFile.size)
+    }
+  }
+
+  @Test
+  fun `test LRU`() {
+    runConcurrently(concurrency) { threadIndex ->
+      val file = createRandomFile(threadIndex)
+      cache.store(threadIndex.toString(), CacheValue(file, emptyArray()))
+
+      Files.deleteIfExists(file.toPath())
+    }
+
+    val randomAccessIndexes = (0 until concurrency)
+      .shuffled()
+      .toList()
+
+    runBlocking {
+      for (index in randomAccessIndexes) {
+        cache.get(index.toString())
+      }
+
+      val cacheInfoFile = readCacheInfoFile()
+
+      for (index in randomAccessIndexes) {
+        val cacheValue = cache.evictOldest()!!
+        val record = cacheInfoFile.first { it.url == index.toString() }
+
+        assertEquals(record.cachedFile.name, cacheValue.file.name)
+      }
+
+      assertEquals(0, cache.size())
+
+      val newCacheInfoFile = readCacheInfoFile()
+      assertEquals(true, newCacheInfoFile.isEmpty())
+
+      val files = listFiles()
+      assertEquals(true, files.isEmpty())
     }
   }
 }

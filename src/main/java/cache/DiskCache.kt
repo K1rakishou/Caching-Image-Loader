@@ -44,9 +44,16 @@ class DiskCache(
             val oldest = getOldestCacheEntries(operation.sizeAtLest, cacheEntryMap)
             operation.result.complete(oldest)
           }
+          is CacheOperation.Size -> {
+            operation.result.complete(cacheEntryMap.size)
+          }
           is CacheOperation.Remove -> {
             innerRemove(operation.key, cacheEntryMap)
             operation.result.complete(Unit)
+          }
+          is CacheOperation.EvictOldest -> {
+            val oldest = innerEvictOldest(cacheEntryMap)
+            operation.result.complete(oldest)
           }
           is CacheOperation.Clear -> {
             innerClear(cacheEntryMap)
@@ -99,6 +106,18 @@ class DiskCache(
     result.await()
   }
 
+  override suspend fun size(): Int {
+    val result = CompletableDeferred<Int>()
+    cacheOperationsActor.send(CacheOperation.Size(result))
+    return result.await()
+  }
+
+  override suspend fun evictOldest(): CacheValue? {
+    val result = CompletableDeferred<CacheValue?>()
+    cacheOperationsActor.send(CacheOperation.EvictOldest(result))
+    return result.await()
+  }
+
   override suspend fun clear() {
     val result = CompletableDeferred<Unit>()
     cacheOperationsActor.send(CacheOperation.Clear(result))
@@ -108,6 +127,22 @@ class DiskCache(
   /**
    * Inner operations
    * */
+
+  private fun innerEvictOldest(cacheEntryMap: HashMap<String, CacheInfoRecord>): CacheValue? {
+    if (cacheEntryMap.isEmpty()) {
+      return null
+    }
+
+    val oldest = cacheEntryMap
+      .minBy { it.value.lastAccessTime }
+
+    if (oldest == null) {
+      return null
+    }
+
+    innerRemove(oldest.key, cacheEntryMap)
+    return CacheValue(oldest.value.cachedFile, oldest.value.appliedTransformations)
+  }
 
   private fun innerClear(cacheInfoRecordMap: HashMap<String, CacheInfoRecord>) {
     cacheInfoRecordMap.clear()
@@ -155,6 +190,12 @@ class DiskCache(
       return null
     }
 
+    //update lastAccessTime on every get operation
+    cacheEntry.lastAccessTime = System.nanoTime()
+
+    //and update it in the cacheInfoFile
+    innerUpdateCacheInfoFile(cacheInfoRecordMap)
+
     return CacheValue(cacheEntry.cachedFile, cacheEntry.appliedTransformations)
   }
 
@@ -178,7 +219,7 @@ class DiskCache(
     val newFile = createCachedImageFile(key)
     inFile.copyTo(newFile)
 
-    cacheInfoRecordMap[key] = CacheInfoRecord(key, newFile, System.currentTimeMillis(), appliedTransformations)
+    cacheInfoRecordMap[key] = CacheInfoRecord(key, newFile, System.nanoTime(), appliedTransformations)
     innerUpdateCacheInfoFile(cacheInfoRecordMap)
   }
 
@@ -277,7 +318,7 @@ class DiskCache(
         append(separator)
         append(value.cachedFile.absolutePath)
         append(separator)
-        append(value.addedOn)
+        append(value.lastAccessTime)
         append(separator)
         append("($appliedTransformations)")
         appendln()
@@ -302,7 +343,7 @@ class DiskCache(
     cacheInfoRecordMap: HashMap<String, CacheInfoRecord>
   ): List<CacheInfoRecord> {
     val sortedCacheEntries = cacheInfoRecordMap.values
-      .sortedBy { it.addedOn }
+      .sortedBy { it.lastAccessTime }
 
     var accumulatedSize = 0L
     val oldest = mutableListOf<CacheInfoRecord>()
@@ -382,11 +423,15 @@ class DiskCache(
     class Get(val key: String,
               val result: CompletableDeferred<CacheValue?>) : CacheOperation()
 
+    class Size(val result: CompletableDeferred<Int>) : CacheOperation()
+
     class Remove(val key: String,
                  val result: CompletableDeferred<Unit>) : CacheOperation()
 
     class GetOldest(val sizeAtLest: Long,
                     val result: CompletableDeferred<List<CacheInfoRecord>>) : CacheOperation()
+
+    class EvictOldest(val result: CompletableDeferred<CacheValue?>) : CacheOperation()
 
     class Clear(val result: CompletableDeferred<Unit>) : CacheOperation()
   }
