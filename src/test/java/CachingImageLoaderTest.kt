@@ -141,6 +141,8 @@ class CachingImageLoaderTest {
       val url = imageUrls[0]
       val image = defaultImageLoader.newRequest()
         .load(url)
+        .transformations(TransformationBuilder().noTransformations())
+        .saveStrategy(SaveStrategy.SaveOriginalImage)
         .getAsync()
         .await()
 
@@ -164,12 +166,16 @@ class CachingImageLoaderTest {
 
         val image1 = defaultImageLoader.newRequest()
           .load(url)
+          .transformations(TransformationBuilder().noTransformations())
+          .saveStrategy(SaveStrategy.SaveOriginalImage)
           .getAsync()
           .await()
         assertNotNull(image1)
 
         val image2 = defaultImageLoader.newRequest()
           .load(url)
+          .transformations(TransformationBuilder().noTransformations())
+          .saveStrategy(SaveStrategy.SaveOriginalImage)
           .getAsync()
           .await()
         assertNotNull(image2)
@@ -194,6 +200,8 @@ class CachingImageLoaderTest {
           .map {
             defaultImageLoader.newRequest()
               .load(it)
+              .transformations(TransformationBuilder().noTransformations())
+              .saveStrategy(SaveStrategy.SaveOriginalImage)
               .getAsync()
           }
           .map { it.await() }
@@ -213,6 +221,8 @@ class CachingImageLoaderTest {
             GlobalScope.async {
               defaultImageLoader.newRequest()
                 .load(it)
+                .transformations(TransformationBuilder().noTransformations())
+                .saveStrategy(SaveStrategy.SaveOriginalImage)
                 .getAsync()
             }
           }
@@ -241,6 +251,8 @@ class CachingImageLoaderTest {
             GlobalScope.async {
               imageLoaderWithSmallCache.newRequest()
                 .load(it)
+                .transformations(TransformationBuilder().noTransformations())
+                .saveStrategy(SaveStrategy.SaveOriginalImage)
                 .getAsync()
             }
           }
@@ -265,6 +277,8 @@ class CachingImageLoaderTest {
     runBlocking {
       val image = defaultImageLoader.newRequest()
         .load("test_non_existent_url.ru")
+        .transformations(TransformationBuilder().noTransformations())
+        .saveStrategy(SaveStrategy.SaveOriginalImage)
         .getAsync()
         .await()
 

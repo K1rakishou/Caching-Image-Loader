@@ -6,7 +6,7 @@ import java.io.File
 class CacheInfoRecord(
   val url: String,
   val cachedFile: File,
-  val addedOn: Long,
+  var lastAccessTime: Long,
   val appliedTransformations: Array<TransformationType>
 ) {
 

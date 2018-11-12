@@ -7,6 +7,7 @@ import org.junit.Test
 import transformations.TransformationType
 import java.io.File
 import java.nio.file.Files
+import kotlin.random.Random
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
@@ -29,12 +30,12 @@ class DiskCacheTest {
     Files.deleteIfExists(path)
   }
 
-  fun listFiles(): Array<File> {
+  private fun listFiles(): Array<File> {
     return cacheDir
       .listFiles { _, fileName -> fileName != cacheInfoFile.name }
   }
 
-  fun readCacheInfoFile(): List<CacheInfoRecord> {
+  private fun readCacheInfoFile(): List<CacheInfoRecord> {
     val lines = cacheInfoFile.readLines()
     val cacheEntries = mutableListOf<CacheInfoRecord>()
 
@@ -47,7 +48,7 @@ class DiskCacheTest {
       assertTrue(file.exists())
       assertTrue(file.isFile)
 
-      val addedOn = addedOnStr.toLong()
+      val lastAccessTime = addedOnStr.toLong()
 
       val appliedTransformations = appliedTransformationsStr
         .removePrefix("(")
@@ -65,7 +66,7 @@ class DiskCacheTest {
         }
       }
 
-      cacheEntries += CacheInfoRecord(url, file, addedOn, transformations)
+      cacheEntries += CacheInfoRecord(url, file, lastAccessTime, transformations)
     }
 
     return cacheEntries
@@ -98,6 +99,11 @@ class DiskCacheTest {
 
     cache.init()
     smallCache.init()
+
+    runBlocking {
+      cache.clear()
+      smallCache.clear()
+    }
   }
 
   @After
@@ -158,6 +164,48 @@ class DiskCacheTest {
 
       val cacheInfoFile = readCacheInfoFile()
       assertEquals(1, cacheInfoFile.size)
+    }
+  }
+
+  @Test
+  fun `test LRU eviction`() {
+    runConcurrently(concurrency) { threadIndex ->
+      val file = createRandomFile(threadIndex)
+      cache.store(threadIndex.toString(), CacheValue(file, emptyArray()))
+
+      Files.deleteIfExists(file.toPath())
+    }
+
+    val predictableRandom = Random(0)
+    val randomAccessIndexes = (0 until concurrency)
+      .shuffled(predictableRandom)
+      .toList()
+
+    runBlocking {
+      for (index in randomAccessIndexes) {
+        cache.get(index.toString())
+      }
+
+      val cacheInfoFile = readCacheInfoFile()
+      var prevAccessTime = 0L
+
+      for (index in randomAccessIndexes) {
+        val cacheValue = cache.evictOldest()!!
+        val record = cacheInfoFile.first { it.url == index.toString() }
+
+        assertEquals(record.cachedFile.name, cacheValue.file.name)
+        assertEquals(true, prevAccessTime < record.lastAccessTime)
+
+        prevAccessTime = record.lastAccessTime
+      }
+
+      assertEquals(0, cache.size())
+
+      val newCacheInfoFile = readCacheInfoFile()
+      assertEquals(true, newCacheInfoFile.isEmpty())
+
+      val files = listFiles()
+      assertEquals(true, files.isEmpty())
     }
   }
 }
