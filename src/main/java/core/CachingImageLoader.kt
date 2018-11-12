@@ -294,29 +294,35 @@ class CachingImageLoader(
     private var saveStrategy = SaveStrategy.SaveOriginalImage
     private val transformers = mutableListOf<ImageTransformation>()
 
-    fun load(url: String): RequestBuilder {
+    fun load(url: String): TransformationsOptions {
       this.url = url
-      return this
+      return TransformationsOptions()
     }
 
-    fun transformations(builder: TransformationBuilder): RequestBuilder {
-      transformers.addAll(builder.getTransformers())
-      return this
+    inner class TransformationsOptions {
+      fun transformations(builder: TransformationBuilder): SaveOptions {
+        transformers.addAll(builder.getTransformers())
+        return SaveOptions()
+      }
     }
 
-    fun saveStrategy(saveStrategy: SaveStrategy): RequestBuilder {
-      this.saveStrategy = saveStrategy
-      return this
+    inner class SaveOptions {
+      fun saveStrategy(_saveStrategy: SaveStrategy): TerminalOptions {
+        saveStrategy = _saveStrategy
+        return TerminalOptions()
+      }
     }
 
-    fun getAsync(): CompletableFuture<Image?> {
-      val future = CompletableFuture<Image?>()
-      runRequest(LoaderRequest.DownloadAsyncRequest(future), saveStrategy, url, transformers)
-      return future
-    }
+    inner class TerminalOptions {
+      fun getAsync(): CompletableFuture<Image?> {
+        val future = CompletableFuture<Image?>()
+        runRequest(LoaderRequest.DownloadAsyncRequest(future), saveStrategy, url, transformers)
+        return future
+      }
 
-    fun into(imageView: ImageView) {
-      runRequest(LoaderRequest.DownloadAndShowRequest(WeakReference(imageView)), saveStrategy, url, transformers)
+      fun into(imageView: ImageView) {
+        runRequest(LoaderRequest.DownloadAndShowRequest(WeakReference(imageView)), saveStrategy, url, transformers)
+      }
     }
   }
 
