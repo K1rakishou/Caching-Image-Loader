@@ -1,4 +1,6 @@
 # Caching-Image-Loader
+[![](https://jitpack.io/v/K1rakishou/Caching-Image-Loader.svg)](https://jitpack.io/#K1rakishou/Caching-Image-Loader)
+
 Image loader for JavaFX's ImageView.
 
 Samples
@@ -75,3 +77,6 @@ val future: CompletableFuture<Image?> = imageLoader.newRequest()
   .saveStrategy(SaveStrategy.SaveOriginalImage)
   .getAsync()
 ```
+
+Samples
+---
