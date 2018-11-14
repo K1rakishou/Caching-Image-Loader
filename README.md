@@ -77,6 +77,3 @@ val future: CompletableFuture<Image?> = imageLoader.newRequest()
   .saveStrategy(SaveStrategy.SaveOriginalImage)
   .getAsync()
 ```
-
-Samples
----
