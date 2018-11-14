@@ -18,6 +18,8 @@ Then you can download an image and render it in an `ImageView` like this:
 ```
 imageLoader.newRequest()
     .load("https://i.imgur.com/e8h3Mbc.jpg")
+    .transformations(TransformationBuilder().noTransformations())
+    .saveStrategy(SaveStrategy.SaveOriginalImage)
     .into(imageView)
 ```
 
@@ -69,5 +71,7 @@ object without loading it into an ImageView:
 ```
 val future: CompletableFuture<Image?> = imageLoader.newRequest()
   .load("https://i.imgur.com/vzsgL0n.jpg")
+  .transformations(TransformationBuilder().noTransformations())
+  .saveStrategy(SaveStrategy.SaveOriginalImage)
   .getAsync()
 ```
