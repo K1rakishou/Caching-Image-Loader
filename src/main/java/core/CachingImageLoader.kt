@@ -28,7 +28,6 @@ class CachingImageLoader(
   private val client: HttpClientFacade = DefaultHttpClient(rootDirectory, showDebugLog),
   private val dispatcher: CoroutineDispatcher = newFixedThreadPoolContext(2, "caching-image-loader")
 ) : CoroutineScope {
-  private val activeRequests = mutableSetOf<String>()
   private val job = Job()
 
   private var diskCache: DiskCache
@@ -71,11 +70,6 @@ class CachingImageLoader(
       throw RuntimeException("Url is not set!")
     }
 
-    if (checkRequestAlreadyInProgress(url)) {
-      onInProgress(loaderRequest)
-      return
-    }
-
     launch(dispatcher) {
       try {
         val fromCache = diskCache.get(url)
@@ -86,7 +80,6 @@ class CachingImageLoader(
 
           try {
             if (imageFile == null) {
-              activeRequests.remove(url)
               onError(loaderRequest)
               return@launch
             }
@@ -109,13 +102,9 @@ class CachingImageLoader(
         }
 
         val image = SwingFXUtils.toFXImage(transformedBufferedImage, null)
-
-        activeRequests.remove(url)
         onSuccess(loaderRequest, image)
       } catch (error: Throwable) {
         error.printStackTrace()
-
-        activeRequests.remove(url)
         onError(loaderRequest)
       }
     }
@@ -128,6 +117,10 @@ class CachingImageLoader(
     transformedImage: BufferedImage,
     appliedTransformations: List<TransformationType>
   ) {
+    if (diskCache.contains(url)) {
+      return
+    }
+
     when (saveStrategy) {
       SaveStrategy.SaveOriginalImage -> diskCache.store(url, cacheValue)
       SaveStrategy.SaveTransformedImage -> {
@@ -137,19 +130,6 @@ class CachingImageLoader(
         }
 
         diskCache.store(url, CacheValue(cacheValue.file, appliedTransformations.toTypedArray()))
-      }
-    }
-  }
-
-  private fun onInProgress(loaderRequest: LoaderRequest) {
-    debugPrint("onInProgress")
-
-    when (loaderRequest) {
-      is LoaderRequest.DownloadAsyncRequest -> {
-        loaderRequest.future.complete(null)
-      }
-      is LoaderRequest.DownloadAndShowRequest -> {
-        //do nothing
       }
     }
   }
@@ -224,17 +204,6 @@ class CachingImageLoader(
     runBlocking {
       diskCache.clear()
     }
-  }
-
-  @Synchronized
-  private fun checkRequestAlreadyInProgress(url: String): Boolean {
-    if (!activeRequests.add(url)) {
-      debugPrint("Already in progress")
-      return true
-    }
-
-    debugPrint("Not in progress")
-    return false
   }
 
   private suspend fun downloadImage(imageUrl: String): File? {

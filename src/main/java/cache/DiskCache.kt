@@ -40,6 +40,10 @@ class DiskCache(
             val cacheValue = innerGet(operation.key, cacheEntryMap)
             operation.result.complete(cacheValue)
           }
+          is CacheOperation.Contains -> {
+            val contains = innerContains(operation.key, cacheEntryMap)
+            operation.result.complete(contains)
+          }
           is CacheOperation.GetOldest -> {
             val oldest = getOldestCacheEntries(operation.sizeAtLest, cacheEntryMap)
             operation.result.complete(oldest)
@@ -92,6 +96,12 @@ class DiskCache(
     val result = CompletableDeferred<Unit>()
     cacheOperationsActor.send(CacheOperation.Store(key, value, result))
     result.await()
+  }
+
+  override suspend fun contains(key: String): Boolean {
+    val result = CompletableDeferred<Boolean>()
+    cacheOperationsActor.send(CacheOperation.Contains(key, result))
+    return result.await()
   }
 
   override suspend fun get(key: String): CacheValue? {
@@ -197,6 +207,10 @@ class DiskCache(
     innerUpdateCacheInfoFile(cacheInfoRecordMap)
 
     return CacheValue(cacheEntry.cachedFile, cacheEntry.appliedTransformations)
+  }
+
+  private fun innerContains(key: String, cacheInfoRecordMap: HashMap<String, CacheInfoRecord>): Boolean {
+    return cacheInfoRecordMap.contains(key)
   }
 
   private fun innerStore(
@@ -419,6 +433,9 @@ class DiskCache(
     class Store(val key: String,
                 val cacheValue: CacheValue,
                 val result: CompletableDeferred<Unit>) : CacheOperation()
+
+    class Contains(val key: String,
+                   val result: CompletableDeferred<Boolean>) : CacheOperation()
 
     class Get(val key: String,
               val result: CompletableDeferred<CacheValue?>) : CacheOperation()
