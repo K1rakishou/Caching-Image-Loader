@@ -193,26 +193,6 @@ class CachingImageLoaderTest {
   }
 
   @Test
-  fun `should not make a network request to get an image if there is already one in progress`() {
-    repeat(10) {
-      runBlocking {
-        val images = listOf(imageUrls[0], imageUrls[0], imageUrls[0], imageUrls[0])
-          .map {
-            defaultImageLoader.newRequest()
-              .load(it)
-              .transformations(TransformationBuilder().noTransformations())
-              .saveStrategy(SaveStrategy.SaveOriginalImage)
-              .getAsync()
-          }
-          .map { it.await() }
-
-        assertEquals(1, images.count { it != null })
-        assertEquals(3, images.count { it == null })
-      }
-    }
-  }
-
-  @Test
   fun `test download images concurrently with enough space in the cache`() {
     repeat(5) {
       runBlocking {
